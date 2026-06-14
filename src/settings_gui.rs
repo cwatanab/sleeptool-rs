@@ -1260,6 +1260,52 @@ slint::slint! {
     }
 }
 
+fn populate_settings_window(
+    window: &SettingsWindow,
+    state: &SharedState,
+    platform: &Arc<WindowsPlatform>,
+) {
+    // Load config values into UI
+    let config = {
+        let s = state.lock().unwrap();
+        s.config.as_ref().clone()
+    };
+
+    window.set_sleep_delay_minutes((config.sleep_delay_seconds / 60) as f32);
+    window.set_hibernate(config.hibernate);
+    window.set_sound_enabled(config.sound_enabled);
+    window.set_auto_start(config.auto_start);
+    window.set_display_off_on_sleep(config.display_off_on_sleep);
+    window.set_warn_before_sleep(config.warn_before_sleep);
+    window.set_warn_sound_enabled(config.warn_sound_enabled);
+    window.set_display_state_by_icon(config.display_state_by_icon);
+
+    window.set_cpu_enabled(config.cpu.enabled);
+    window.set_cpu_threshold(config.cpu.threshold as f32);
+
+    window.set_network_enabled(config.network.enabled);
+    window.set_network_threshold_kb((config.network.threshold / 1000.0) as f32);
+
+    window.set_disk_write_enabled(config.disk_write.enabled);
+    window.set_disk_write_threshold_kb((config.disk_write.threshold / 1000.0) as f32);
+
+    window.set_excluded_processes(slint::SharedString::from(config.excluded_processes.join(", ")));
+    window.set_watched_processes(slint::SharedString::from(config.watched_processes.join(", ")));
+    // Initialize tag slots
+    sync_tags(window, &config.watched_processes, "watched");
+    sync_tags(window, &config.excluded_processes, "excluded");
+
+    // Load process list for autocomplete
+    if let Ok(processes) = platform.list_running_processes() {
+        let process_model: Vec<slint::SharedString> = processes
+            .into_iter()
+            .map(|p| slint::SharedString::from(p))
+            .collect();
+        let model = std::rc::Rc::new(slint::VecModel::from(process_model));
+        window.set_process_suggestions(slint::ModelRc::from(model));
+    }
+}
+
 pub fn show_settings_window(
     state: SharedState,
     platform: Arc<WindowsPlatform>,
@@ -1268,336 +1314,336 @@ pub fn show_settings_window(
     {
         let mut s = state.lock().unwrap();
         if s.settings_open {
+            if let Some(ref weak) = s.settings_window {
+                let _ = weak.upgrade_in_event_loop(|window| {
+                    window.show().unwrap();
+                });
+            }
             return;
         }
         s.settings_open = true;
+
+        if let Some(ref weak) = s.settings_window {
+            let state_clone = state.clone();
+            let platform_clone = platform.clone();
+            let _ = weak.upgrade_in_event_loop(move |window| {
+                populate_settings_window(&window, &state_clone, &platform_clone);
+                window.show().unwrap();
+            });
+            return;
+        }
     }
 
     let state_for_cleanup = state.clone();
+    let platform_clone = platform.clone();
     std::thread::spawn(move || {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let window = match SettingsWindow::new() {
                 Ok(w) => w,
                 Err(e) => {
                     crate::tracing::error!("Failed to create settings window: {}", e);
+                    let mut s = state.lock().unwrap();
+                    s.settings_open = false;
                     return;
                 }
             };
 
-        // Load config values into UI
-        let config = {
-            let s = state.lock().unwrap();
-            s.config.as_ref().clone()
-        };
-
-        window.set_sleep_delay_minutes((config.sleep_delay_seconds / 60) as f32);
-        window.set_hibernate(config.hibernate);
-        window.set_sound_enabled(config.sound_enabled);
-        window.set_auto_start(config.auto_start);
-        window.set_display_off_on_sleep(config.display_off_on_sleep);
-        window.set_warn_before_sleep(config.warn_before_sleep);
-        window.set_warn_sound_enabled(config.warn_sound_enabled);
-        window.set_display_state_by_icon(config.display_state_by_icon);
-
-        window.set_cpu_enabled(config.cpu.enabled);
-        window.set_cpu_threshold(config.cpu.threshold as f32);
-
-        window.set_network_enabled(config.network.enabled);
-        window.set_network_threshold_kb((config.network.threshold / 1000.0) as f32);
-
-        window.set_disk_write_enabled(config.disk_write.enabled);
-        window.set_disk_write_threshold_kb((config.disk_write.threshold / 1000.0) as f32);
-
-        window.set_excluded_processes(slint::SharedString::from(config.excluded_processes.join(", ")));
-        window.set_watched_processes(slint::SharedString::from(config.watched_processes.join(", ")));
-        // Initialize tag slots
-        sync_tags(&window, &config.watched_processes, "watched");
-        sync_tags(&window, &config.excluded_processes, "excluded");
-
-        // Load process list for autocomplete
-        if let Ok(processes) = platform.list_running_processes() {
-            let process_model: Vec<slint::SharedString> = processes
-                .into_iter()
-                .map(|p| slint::SharedString::from(p))
-                .collect();
-            let model = std::rc::Rc::new(slint::VecModel::from(process_model));
-            window.set_process_suggestions(slint::ModelRc::from(model));
-        }
-
-        let window_weak = window.as_weak();
-        let state_clone = state.clone();
-        let platform_clone = platform.clone();
-
-        // Chip callbacks — watched
-        window.on_watched_add({
-            let w = window_weak.clone();
-            move |text: slint::SharedString| {
-                let win = w.unwrap();
-                let current = win.get_watched_processes();
-                let updated = add_to_list(&current, &text);
-                win.set_watched_processes(slint::SharedString::from(updated.as_str()));
-                sync_tags_str(&win, &updated, "watched");
-            }
-        });
-        window.on_watched_remove({
-            let w = window_weak.clone();
-            move |idx: i32| {
-                let win = w.unwrap();
-                let current = win.get_watched_processes();
-                let updated = remove_from_list(&current, idx as usize);
-                win.set_watched_processes(slint::SharedString::from(updated.as_str()));
-                sync_tags_str(&win, &updated, "watched");
-            }
-        });
-
-        // Chip callbacks — excluded
-        window.on_excluded_add({
-            let w = window_weak.clone();
-            move |text: slint::SharedString| {
-                let win = w.unwrap();
-                let current = win.get_excluded_processes();
-                let updated = add_to_list(&current, &text);
-                win.set_excluded_processes(slint::SharedString::from(updated.as_str()));
-                sync_tags_str(&win, &updated, "excluded");
-            }
-        });
-        window.on_excluded_remove({
-            let w = window_weak.clone();
-            move |idx: i32| {
-                let win = w.unwrap();
-                let current = win.get_excluded_processes();
-                let updated = remove_from_list(&current, idx as usize);
-                win.set_excluded_processes(slint::SharedString::from(updated.as_str()));
-                sync_tags_str(&win, &updated, "excluded");
-            }
-        });
-
-        window.on_save_clicked(move || {
-            let window = window_weak.unwrap();
-            let mut s = state_clone.lock().unwrap();
-            let cfg = Arc::make_mut(&mut s.config);
-
-            cfg.sleep_delay_seconds = (window.get_sleep_delay_minutes().round() as u64) * 60;
-            cfg.hibernate = window.get_hibernate();
-            cfg.sound_enabled = window.get_sound_enabled();
-            cfg.auto_start = window.get_auto_start();
-            cfg.display_off_on_sleep = window.get_display_off_on_sleep();
-            cfg.warn_before_sleep = window.get_warn_before_sleep();
-            cfg.warn_sound_enabled = window.get_warn_sound_enabled();
-            cfg.display_state_by_icon = window.get_display_state_by_icon();
-
-            cfg.cpu.enabled = window.get_cpu_enabled();
-            cfg.cpu.threshold = window.get_cpu_threshold().round() as f64;
-            cfg.cpu.delay_seconds = 180;
-
-            cfg.network.enabled = window.get_network_enabled();
-            cfg.network.threshold = (window.get_network_threshold_kb().round() as f64) * 1000.0;
-            cfg.network.delay_seconds = 180;
-
-            cfg.disk_write.enabled = window.get_disk_write_enabled();
-            cfg.disk_write.threshold = (window.get_disk_write_threshold_kb().round() as f64) * 1000.0;
-            cfg.disk_write.delay_seconds = 180;
-
-            let parse_list = |s: slint::SharedString| -> Vec<String> {
-                s.split(',')
-                    .map(|item| item.trim().to_string())
-                    .filter(|item| !item.is_empty())
-                    .collect()
-            };
-
-            cfg.excluded_processes = parse_list(window.get_excluded_processes());
-            cfg.watched_processes = parse_list(window.get_watched_processes());
-            cfg.watched_printers = vec![];
-
-            if let Err(e) = cfg.save(&Config::config_path()) {
-                crate::tracing::error!("Failed to save config: {}", e);
+            // Store the weak reference in state
+            {
+                let mut s = state.lock().unwrap();
+                s.settings_window = Some(window.as_weak());
             }
 
-            let _ = platform_clone.set_auto_start(cfg.auto_start);
+            populate_settings_window(&window, &state, &platform_clone);
 
-            if let Some(hwnd) = hwnd {
-                unsafe {
-                    let _ = windows::Win32::UI::WindowsAndMessaging::PostMessageW(
-                        windows::Win32::Foundation::HWND(hwnd as *mut std::ffi::c_void),
-                        crate::tray::WM_UPDATE_TRAY,
-                        windows::Win32::Foundation::WPARAM(0),
-                        windows::Win32::Foundation::LPARAM(0),
-                    );
+            let window_weak = window.as_weak();
+            let platform_clone2 = platform_clone.clone();
+
+            // Chip callbacks — watched
+            window.on_watched_add({
+                let w = window_weak.clone();
+                move |text: slint::SharedString| {
+                    let win = w.unwrap();
+                    let current = win.get_watched_processes();
+                    let updated = add_to_list(&current, &text);
+                    win.set_watched_processes(slint::SharedString::from(updated.as_str()));
+                    sync_tags_str(&win, &updated, "watched");
                 }
-            }
-
-            window.hide().unwrap();
-        });
-
-        let window_weak2 = window.as_weak();
-        window.on_cancel_clicked(move || {
-            let window = window_weak2.unwrap();
-            window.hide().unwrap();
-        });
-
-        // Setup real-time monitoring timer (every 1 second)
-        let window_weak_timer = window.as_weak();
-        let platform_timer = platform.clone();
-        let timer = slint::Timer::default();
-        timer.start(
-            slint::TimerMode::Repeated,
-            std::time::Duration::from_millis(1000),
-            move || {
-                if let Some(window) = window_weak_timer.upgrade() {
-                    let mut new_cpu = 0.0;
-                    let mut new_network = 0.0;
-                    let mut new_disk_write = 0.0;
-                    let mut sound_rms = 0.0;
-
-                    if let Ok(perf) = platform_timer.query_performance() {
-                        new_cpu = perf.cpu_percent as f32;
-                        new_network = (perf.network_bytes_per_sec / 1024.0) as f32;
-                        new_disk_write = (perf.disk_write_bytes_per_sec / 1024.0) as f32;
-
-                        window.set_current_cpu(new_cpu);
-                        window.set_current_network_kb(new_network);
-                        window.set_current_disk_write_kb(new_disk_write);
-                    }
-                    if let Ok(sound) = platform_timer.current_sound_rms() {
-                        sound_rms = sound as f32;
-                        window.set_current_sound_active(sound_rms >= 0.01);
-                    }
-
-                    // Shift CPU History
-                    window.set_cpu_history_29(window.get_cpu_history_28());
-                    window.set_cpu_history_28(window.get_cpu_history_27());
-                    window.set_cpu_history_27(window.get_cpu_history_26());
-                    window.set_cpu_history_26(window.get_cpu_history_25());
-                    window.set_cpu_history_25(window.get_cpu_history_24());
-                    window.set_cpu_history_24(window.get_cpu_history_23());
-                    window.set_cpu_history_23(window.get_cpu_history_22());
-                    window.set_cpu_history_22(window.get_cpu_history_21());
-                    window.set_cpu_history_21(window.get_cpu_history_20());
-                    window.set_cpu_history_20(window.get_cpu_history_19());
-                    window.set_cpu_history_19(window.get_cpu_history_18());
-                    window.set_cpu_history_18(window.get_cpu_history_17());
-                    window.set_cpu_history_17(window.get_cpu_history_16());
-                    window.set_cpu_history_16(window.get_cpu_history_15());
-                    window.set_cpu_history_15(window.get_cpu_history_14());
-                    window.set_cpu_history_14(window.get_cpu_history_13());
-                    window.set_cpu_history_13(window.get_cpu_history_12());
-                    window.set_cpu_history_12(window.get_cpu_history_11());
-                    window.set_cpu_history_11(window.get_cpu_history_10());
-                    window.set_cpu_history_10(window.get_cpu_history_9());
-                    window.set_cpu_history_9(window.get_cpu_history_8());
-                    window.set_cpu_history_8(window.get_cpu_history_7());
-                    window.set_cpu_history_7(window.get_cpu_history_6());
-                    window.set_cpu_history_6(window.get_cpu_history_5());
-                    window.set_cpu_history_5(window.get_cpu_history_4());
-                    window.set_cpu_history_4(window.get_cpu_history_3());
-                    window.set_cpu_history_3(window.get_cpu_history_2());
-                    window.set_cpu_history_2(window.get_cpu_history_1());
-                    window.set_cpu_history_1(window.get_cpu_history_0());
-                    window.set_cpu_history_0(new_cpu);
-
-                    // Shift Network History
-                    window.set_network_history_29(window.get_network_history_28());
-                    window.set_network_history_28(window.get_network_history_27());
-                    window.set_network_history_27(window.get_network_history_26());
-                    window.set_network_history_26(window.get_network_history_25());
-                    window.set_network_history_25(window.get_network_history_24());
-                    window.set_network_history_24(window.get_network_history_23());
-                    window.set_network_history_23(window.get_network_history_22());
-                    window.set_network_history_22(window.get_network_history_21());
-                    window.set_network_history_21(window.get_network_history_20());
-                    window.set_network_history_20(window.get_network_history_19());
-                    window.set_network_history_19(window.get_network_history_18());
-                    window.set_network_history_18(window.get_network_history_17());
-                    window.set_network_history_17(window.get_network_history_16());
-                    window.set_network_history_16(window.get_network_history_15());
-                    window.set_network_history_15(window.get_network_history_14());
-                    window.set_network_history_14(window.get_network_history_13());
-                    window.set_network_history_13(window.get_network_history_12());
-                    window.set_network_history_12(window.get_network_history_11());
-                    window.set_network_history_11(window.get_network_history_10());
-                    window.set_network_history_10(window.get_network_history_9());
-                    window.set_network_history_9(window.get_network_history_8());
-                    window.set_network_history_8(window.get_network_history_7());
-                    window.set_network_history_7(window.get_network_history_6());
-                    window.set_network_history_6(window.get_network_history_5());
-                    window.set_network_history_5(window.get_network_history_4());
-                    window.set_network_history_4(window.get_network_history_3());
-                    window.set_network_history_3(window.get_network_history_2());
-                    window.set_network_history_2(window.get_network_history_1());
-                    window.set_network_history_1(window.get_network_history_0());
-                    window.set_network_history_0(new_network);
-
-                    // Shift Disk Write History
-                    window.set_disk_write_history_29(window.get_disk_write_history_28());
-                    window.set_disk_write_history_28(window.get_disk_write_history_27());
-                    window.set_disk_write_history_27(window.get_disk_write_history_26());
-                    window.set_disk_write_history_26(window.get_disk_write_history_25());
-                    window.set_disk_write_history_25(window.get_disk_write_history_24());
-                    window.set_disk_write_history_24(window.get_disk_write_history_23());
-                    window.set_disk_write_history_23(window.get_disk_write_history_22());
-                    window.set_disk_write_history_22(window.get_disk_write_history_21());
-                    window.set_disk_write_history_21(window.get_disk_write_history_20());
-                    window.set_disk_write_history_20(window.get_disk_write_history_19());
-                    window.set_disk_write_history_19(window.get_disk_write_history_18());
-                    window.set_disk_write_history_18(window.get_disk_write_history_17());
-                    window.set_disk_write_history_17(window.get_disk_write_history_16());
-                    window.set_disk_write_history_16(window.get_disk_write_history_15());
-                    window.set_disk_write_history_15(window.get_disk_write_history_14());
-                    window.set_disk_write_history_14(window.get_disk_write_history_13());
-                    window.set_disk_write_history_13(window.get_disk_write_history_12());
-                    window.set_disk_write_history_12(window.get_disk_write_history_11());
-                    window.set_disk_write_history_11(window.get_disk_write_history_10());
-                    window.set_disk_write_history_10(window.get_disk_write_history_9());
-                    window.set_disk_write_history_9(window.get_disk_write_history_8());
-                    window.set_disk_write_history_8(window.get_disk_write_history_7());
-                    window.set_disk_write_history_7(window.get_disk_write_history_6());
-                    window.set_disk_write_history_6(window.get_disk_write_history_5());
-                    window.set_disk_write_history_5(window.get_disk_write_history_4());
-                    window.set_disk_write_history_4(window.get_disk_write_history_3());
-                    window.set_disk_write_history_3(window.get_disk_write_history_2());
-                    window.set_disk_write_history_2(window.get_disk_write_history_1());
-                    window.set_disk_write_history_1(window.get_disk_write_history_0());
-                    window.set_disk_write_history_0(new_disk_write);
-
-                    // Shift Sound History
-                    window.set_sound_history_29(window.get_sound_history_28());
-                    window.set_sound_history_28(window.get_sound_history_27());
-                    window.set_sound_history_27(window.get_sound_history_26());
-                    window.set_sound_history_26(window.get_sound_history_25());
-                    window.set_sound_history_25(window.get_sound_history_24());
-                    window.set_sound_history_24(window.get_sound_history_23());
-                    window.set_sound_history_23(window.get_sound_history_22());
-                    window.set_sound_history_22(window.get_sound_history_21());
-                    window.set_sound_history_21(window.get_sound_history_20());
-                    window.set_sound_history_20(window.get_sound_history_19());
-                    window.set_sound_history_19(window.get_sound_history_18());
-                    window.set_sound_history_18(window.get_sound_history_17());
-                    window.set_sound_history_17(window.get_sound_history_16());
-                    window.set_sound_history_16(window.get_sound_history_15());
-                    window.set_sound_history_15(window.get_sound_history_14());
-                    window.set_sound_history_14(window.get_sound_history_13());
-                    window.set_sound_history_13(window.get_sound_history_12());
-                    window.set_sound_history_12(window.get_sound_history_11());
-                    window.set_sound_history_11(window.get_sound_history_10());
-                    window.set_sound_history_10(window.get_sound_history_9());
-                    window.set_sound_history_9(window.get_sound_history_8());
-                    window.set_sound_history_8(window.get_sound_history_7());
-                    window.set_sound_history_7(window.get_sound_history_6());
-                    window.set_sound_history_6(window.get_sound_history_5());
-                    window.set_sound_history_5(window.get_sound_history_4());
-                    window.set_sound_history_4(window.get_sound_history_3());
-                    window.set_sound_history_3(window.get_sound_history_2());
-                    window.set_sound_history_2(window.get_sound_history_1());
-                    window.set_sound_history_1(window.get_sound_history_0());
-                    window.set_sound_history_0(sound_rms);
+            });
+            window.on_watched_remove({
+                let w = window_weak.clone();
+                move |idx: i32| {
+                    let win = w.unwrap();
+                    let current = win.get_watched_processes();
+                    let updated = remove_from_list(&current, idx as usize);
+                    win.set_watched_processes(slint::SharedString::from(updated.as_str()));
+                    sync_tags_str(&win, &updated, "watched");
                 }
-            },
-        );
+            });
 
-            let _ = window.run();
+            // Chip callbacks — excluded
+            window.on_excluded_add({
+                let w = window_weak.clone();
+                move |text: slint::SharedString| {
+                    let win = w.unwrap();
+                    let current = win.get_excluded_processes();
+                    let updated = add_to_list(&current, &text);
+                    win.set_excluded_processes(slint::SharedString::from(updated.as_str()));
+                    sync_tags_str(&win, &updated, "excluded");
+                }
+            });
+            window.on_excluded_remove({
+                let w = window_weak.clone();
+                move |idx: i32| {
+                    let win = w.unwrap();
+                    let current = win.get_excluded_processes();
+                    let updated = remove_from_list(&current, idx as usize);
+                    win.set_excluded_processes(slint::SharedString::from(updated.as_str()));
+                    sync_tags_str(&win, &updated, "excluded");
+                }
+            });
+
+            let state_clone_save = state.clone();
+            window.on_save_clicked(move || {
+                let window = window_weak.unwrap();
+                let mut s = state_clone_save.lock().unwrap();
+                let cfg = Arc::make_mut(&mut s.config);
+
+                cfg.sleep_delay_seconds = (window.get_sleep_delay_minutes().round() as u64) * 60;
+                cfg.hibernate = window.get_hibernate();
+                cfg.sound_enabled = window.get_sound_enabled();
+                cfg.auto_start = window.get_auto_start();
+                cfg.display_off_on_sleep = window.get_display_off_on_sleep();
+                cfg.warn_before_sleep = window.get_warn_before_sleep();
+                cfg.warn_sound_enabled = window.get_warn_sound_enabled();
+                cfg.display_state_by_icon = window.get_display_state_by_icon();
+
+                cfg.cpu.enabled = window.get_cpu_enabled();
+                cfg.cpu.threshold = window.get_cpu_threshold().round() as f64;
+                cfg.cpu.delay_seconds = 180;
+
+                cfg.network.enabled = window.get_network_enabled();
+                cfg.network.threshold = (window.get_network_threshold_kb().round() as f64) * 1000.0;
+                cfg.network.delay_seconds = 180;
+
+                cfg.disk_write.enabled = window.get_disk_write_enabled();
+                cfg.disk_write.threshold = (window.get_disk_write_threshold_kb().round() as f64) * 1000.0;
+                cfg.disk_write.delay_seconds = 180;
+
+                let parse_list = |s: slint::SharedString| -> Vec<String> {
+                    s.split(',')
+                        .map(|item| item.trim().to_string())
+                        .filter(|item| !item.is_empty())
+                        .collect()
+                };
+
+                cfg.excluded_processes = parse_list(window.get_excluded_processes());
+                cfg.watched_processes = parse_list(window.get_watched_processes());
+                cfg.watched_printers = vec![];
+
+                if let Err(e) = cfg.save(&Config::config_path()) {
+                    crate::tracing::error!("Failed to save config: {}", e);
+                }
+
+                let _ = platform_clone2.set_auto_start(cfg.auto_start);
+
+                if let Some(hwnd) = hwnd {
+                    unsafe {
+                        let _ = windows::Win32::UI::WindowsAndMessaging::PostMessageW(
+                            windows::Win32::Foundation::HWND(hwnd as *mut std::ffi::c_void),
+                            crate::tray::WM_UPDATE_TRAY,
+                            windows::Win32::Foundation::WPARAM(0),
+                            windows::Win32::Foundation::LPARAM(0),
+                        );
+                    }
+                }
+
+                window.hide().unwrap();
+                s.settings_open = false;
+            });
+
+            let window_weak2 = window.as_weak();
+            let state_clone_cancel = state.clone();
+            window.on_cancel_clicked(move || {
+                let window = window_weak2.unwrap();
+                window.hide().unwrap();
+                let mut s = state_clone_cancel.lock().unwrap();
+                s.settings_open = false;
+            });
+
+            let state_clone_close = state.clone();
+            window.window().on_close_requested(move || {
+                let mut s = state_clone_close.lock().unwrap();
+                s.settings_open = false;
+                slint::CloseRequestResponse::HideWindow
+            });
+
+            // Setup real-time monitoring timer (every 1 second)
+            let window_weak_timer = window.as_weak();
+            let platform_timer = platform_clone.clone();
+            let timer = slint::Timer::default();
+            timer.start(
+                slint::TimerMode::Repeated,
+                std::time::Duration::from_millis(1000),
+                move || {
+                    if let Some(window) = window_weak_timer.upgrade() {
+                        let mut new_cpu = 0.0;
+                        let mut new_network = 0.0;
+                        let mut new_disk_write = 0.0;
+                        let mut sound_rms = 0.0;
+
+                        if let Ok(perf) = platform_timer.query_performance() {
+                            new_cpu = perf.cpu_percent as f32;
+                            new_network = (perf.network_bytes_per_sec / 1024.0) as f32;
+                            new_disk_write = (perf.disk_write_bytes_per_sec / 1024.0) as f32;
+
+                            window.set_current_cpu(new_cpu);
+                            window.set_current_network_kb(new_network);
+                            window.set_current_disk_write_kb(new_disk_write);
+                        }
+                        if let Ok(sound) = platform_timer.current_sound_rms() {
+                            sound_rms = sound as f32;
+                            window.set_current_sound_active(sound_rms >= 0.01);
+                        }
+
+                        // Shift CPU History
+                        window.set_cpu_history_29(window.get_cpu_history_28());
+                        window.set_cpu_history_28(window.get_cpu_history_27());
+                        window.set_cpu_history_27(window.get_cpu_history_26());
+                        window.set_cpu_history_26(window.get_cpu_history_25());
+                        window.set_cpu_history_25(window.get_cpu_history_24());
+                        window.set_cpu_history_24(window.get_cpu_history_23());
+                        window.set_cpu_history_23(window.get_cpu_history_22());
+                        window.set_cpu_history_22(window.get_cpu_history_21());
+                        window.set_cpu_history_21(window.get_cpu_history_20());
+                        window.set_cpu_history_20(window.get_cpu_history_19());
+                        window.set_cpu_history_19(window.get_cpu_history_18());
+                        window.set_cpu_history_18(window.get_cpu_history_17());
+                        window.set_cpu_history_17(window.get_cpu_history_16());
+                        window.set_cpu_history_16(window.get_cpu_history_15());
+                        window.set_cpu_history_15(window.get_cpu_history_14());
+                        window.set_cpu_history_14(window.get_cpu_history_13());
+                        window.set_cpu_history_13(window.get_cpu_history_12());
+                        window.set_cpu_history_12(window.get_cpu_history_11());
+                        window.set_cpu_history_11(window.get_cpu_history_10());
+                        window.set_cpu_history_10(window.get_cpu_history_9());
+                        window.set_cpu_history_9(window.get_cpu_history_8());
+                        window.set_cpu_history_8(window.get_cpu_history_7());
+                        window.set_cpu_history_7(window.get_cpu_history_6());
+                        window.set_cpu_history_6(window.get_cpu_history_5());
+                        window.set_cpu_history_5(window.get_cpu_history_4());
+                        window.set_cpu_history_4(window.get_cpu_history_3());
+                        window.set_cpu_history_3(window.get_cpu_history_2());
+                        window.set_cpu_history_2(window.get_cpu_history_1());
+                        window.set_cpu_history_1(window.get_cpu_history_0());
+                        window.set_cpu_history_0(new_cpu);
+
+                        // Shift Network History
+                        window.set_network_history_29(window.get_network_history_28());
+                        window.set_network_history_28(window.get_network_history_27());
+                        window.set_network_history_27(window.get_network_history_26());
+                        window.set_network_history_26(window.get_network_history_25());
+                        window.set_network_history_25(window.get_network_history_24());
+                        window.set_network_history_24(window.get_network_history_23());
+                        window.set_network_history_23(window.get_network_history_22());
+                        window.set_network_history_22(window.get_network_history_21());
+                        window.set_network_history_21(window.get_network_history_20());
+                        window.set_network_history_20(window.get_network_history_19());
+                        window.set_network_history_19(window.get_network_history_18());
+                        window.set_network_history_18(window.get_network_history_17());
+                        window.set_network_history_17(window.get_network_history_16());
+                        window.set_network_history_16(window.get_network_history_15());
+                        window.set_network_history_15(window.get_network_history_14());
+                        window.set_network_history_14(window.get_network_history_13());
+                        window.set_network_history_13(window.get_network_history_12());
+                        window.set_network_history_12(window.get_network_history_11());
+                        window.set_network_history_11(window.get_network_history_10());
+                        window.set_network_history_10(window.get_network_history_9());
+                        window.set_network_history_9(window.get_network_history_8());
+                        window.set_network_history_8(window.get_network_history_7());
+                        window.set_network_history_7(window.get_network_history_6());
+                        window.set_network_history_6(window.get_network_history_5());
+                        window.set_network_history_5(window.get_network_history_4());
+                        window.set_network_history_4(window.get_network_history_3());
+                        window.set_network_history_3(window.get_network_history_2());
+                        window.set_network_history_2(window.get_network_history_1());
+                        window.set_network_history_1(window.get_network_history_0());
+                        window.set_network_history_0(new_network);
+
+                        // Shift Disk Write History
+                        window.set_disk_write_history_29(window.get_disk_write_history_28());
+                        window.set_disk_write_history_28(window.get_disk_write_history_27());
+                        window.set_disk_write_history_27(window.get_disk_write_history_26());
+                        window.set_disk_write_history_26(window.get_disk_write_history_25());
+                        window.set_disk_write_history_25(window.get_disk_write_history_24());
+                        window.set_disk_write_history_24(window.get_disk_write_history_23());
+                        window.set_disk_write_history_23(window.get_disk_write_history_22());
+                        window.set_disk_write_history_22(window.get_disk_write_history_21());
+                        window.set_disk_write_history_21(window.get_disk_write_history_20());
+                        window.set_disk_write_history_20(window.get_disk_write_history_19());
+                        window.set_disk_write_history_19(window.get_disk_write_history_18());
+                        window.set_disk_write_history_18(window.get_disk_write_history_17());
+                        window.set_disk_write_history_17(window.get_disk_write_history_16());
+                        window.set_disk_write_history_16(window.get_disk_write_history_15());
+                        window.set_disk_write_history_15(window.get_disk_write_history_14());
+                        window.set_disk_write_history_14(window.get_disk_write_history_13());
+                        window.set_disk_write_history_13(window.get_disk_write_history_12());
+                        window.set_disk_write_history_12(window.get_disk_write_history_11());
+                        window.set_disk_write_history_11(window.get_disk_write_history_10());
+                        window.set_disk_write_history_10(window.get_disk_write_history_9());
+                        window.set_disk_write_history_9(window.get_disk_write_history_8());
+                        window.set_disk_write_history_8(window.get_disk_write_history_7());
+                        window.set_disk_write_history_7(window.get_disk_write_history_6());
+                        window.set_disk_write_history_6(window.get_disk_write_history_5());
+                        window.set_disk_write_history_5(window.get_disk_write_history_4());
+                        window.set_disk_write_history_4(window.get_disk_write_history_3());
+                        window.set_disk_write_history_3(window.get_disk_write_history_2());
+                        window.set_disk_write_history_2(window.get_disk_write_history_1());
+                        window.set_disk_write_history_1(window.get_disk_write_history_0());
+                        window.set_disk_write_history_0(new_disk_write);
+
+                        // Shift Sound History
+                        window.set_sound_history_29(window.get_sound_history_28());
+                        window.set_sound_history_28(window.get_sound_history_27());
+                        window.set_sound_history_27(window.get_sound_history_26());
+                        window.set_sound_history_26(window.get_sound_history_25());
+                        window.set_sound_history_25(window.get_sound_history_24());
+                        window.set_sound_history_24(window.get_sound_history_23());
+                        window.set_sound_history_23(window.get_sound_history_22());
+                        window.set_sound_history_22(window.get_sound_history_21());
+                        window.set_sound_history_21(window.get_sound_history_20());
+                        window.set_sound_history_20(window.get_sound_history_19());
+                        window.set_sound_history_19(window.get_sound_history_18());
+                        window.set_sound_history_18(window.get_sound_history_17());
+                        window.set_sound_history_17(window.get_sound_history_16());
+                        window.set_sound_history_16(window.get_sound_history_15());
+                        window.set_sound_history_15(window.get_sound_history_14());
+                        window.set_sound_history_14(window.get_sound_history_13());
+                        window.set_sound_history_13(window.get_sound_history_12());
+                        window.set_sound_history_12(window.get_sound_history_11());
+                        window.set_sound_history_11(window.get_sound_history_10());
+                        window.set_sound_history_10(window.get_sound_history_9());
+                        window.set_sound_history_9(window.get_sound_history_8());
+                        window.set_sound_history_8(window.get_sound_history_7());
+                        window.set_sound_history_7(window.get_sound_history_6());
+                        window.set_sound_history_6(window.get_sound_history_5());
+                        window.set_sound_history_5(window.get_sound_history_4());
+                        window.set_sound_history_4(window.get_sound_history_3());
+                        window.set_sound_history_3(window.get_sound_history_2());
+                        window.set_sound_history_2(window.get_sound_history_1());
+                        window.set_sound_history_1(window.get_sound_history_0());
+                        window.set_sound_history_0(sound_rms);
+                    }
+                },
+            );
+
+            window.show().unwrap();
+
+            let _ = slint::run_event_loop_until_quit();
         }));
 
         let mut s = state_for_cleanup.lock().unwrap();
+        s.settings_window = None;
         s.settings_open = false;
         if let Err(panic_err) = result {
             crate::tracing::error!("Settings window thread panicked: {:?}", panic_err);
