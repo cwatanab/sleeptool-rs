@@ -71,22 +71,22 @@ impl Default for Config {
             cpu: ThresholdConfig {
                 enabled: true,
                 threshold: 1.0, // 1%
-                delay_seconds: 600,
+                delay_seconds: 180,
             },
             network: ThresholdConfig {
                 enabled: true,
                 threshold: 10000.0, // 10 KB/s
-                delay_seconds: 600,
+                delay_seconds: 180,
             },
             disk_write: ThresholdConfig {
                 enabled: true,
                 threshold: 10000.0, // 10 KB/s
-                delay_seconds: 600,
+                delay_seconds: 180,
             },
             disk_read: ThresholdConfig {
                 enabled: false,
                 threshold: 10000.0, // 10 KB/s
-                delay_seconds: 600,
+                delay_seconds: 180,
             },
             excluded_processes: vec![],
             watched_processes: vec![],

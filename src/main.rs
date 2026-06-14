@@ -12,7 +12,31 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+fn ensure_single_instance() -> anyhow::Result<()> {
+    unsafe {
+        let name: Vec<u16> = "SleepToolRs_SingleInstance\0".encode_utf16().collect();
+        let _handle = windows::Win32::System::Threading::CreateMutexW(
+            None,
+            false,
+            windows::core::PCWSTR(name.as_ptr()),
+        )?;
+        if windows::Win32::Foundation::GetLastError()
+            == windows::Win32::Foundation::ERROR_ALREADY_EXISTS
+        {
+            let _ = windows::Win32::UI::WindowsAndMessaging::MessageBoxW(
+                windows::Win32::Foundation::HWND::default(),
+                windows::core::w!("SleepTool は既に起動しています。\nタスクトレイのアイコンから操作してください。"),
+                windows::core::w!("SleepTool"),
+                windows::Win32::UI::WindowsAndMessaging::MB_OK | windows::Win32::UI::WindowsAndMessaging::MB_ICONINFORMATION,
+            );
+            anyhow::bail!("Already running");
+        }
+    }
+    Ok(())
+}
+
 fn main() -> anyhow::Result<()> {
+    ensure_single_instance()?;
     let cli = Cli::parse();
 
     let config_path = Config::config_path();

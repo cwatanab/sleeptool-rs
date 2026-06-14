@@ -2,7 +2,7 @@ use crate::config::Config;
 use crate::error::Result;
 use crate::monitors::{
     cpu::CpuMonitor, disk::DiskReadMonitor, disk::DiskWriteMonitor, input::InputMonitor,
-    network::NetworkMonitor, printer::PrinterMonitor, process::ProcessMonitor,
+    network::NetworkMonitor, process::ProcessMonitor,
     sound::SoundMonitor, InhibitFactor, Monitor, MonitorState,
 };
 use crate::platform::Platform;
@@ -30,7 +30,6 @@ impl Engine {
             Box::new(SoundMonitor::new()),
             Box::new(DiskReadMonitor::new()),
             Box::new(ProcessMonitor::new()),
-            Box::new(PrinterMonitor::new()),
         ];
 
         Self {

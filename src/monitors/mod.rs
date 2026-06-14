@@ -6,13 +6,11 @@ pub mod cpu;
 pub mod disk;
 pub mod input;
 pub mod network;
-pub mod printer;
 pub mod process;
 pub mod sound;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum InhibitFactor {
-    Printer,
     Process,
     Sound,
     Cpu,
@@ -25,7 +23,6 @@ pub enum InhibitFactor {
 impl InhibitFactor {
     pub fn priority(&self) -> u8 {
         match self {
-            InhibitFactor::Printer => 1,
             InhibitFactor::Process => 2,
             InhibitFactor::Sound => 3,
             InhibitFactor::Cpu => 4,
@@ -38,7 +35,6 @@ impl InhibitFactor {
 
     pub fn label(&self) -> &'static str {
         match self {
-            InhibitFactor::Printer => "Printer",
             InhibitFactor::Process => "Process",
             InhibitFactor::Sound => "Sound",
             InhibitFactor::Cpu => "CPU",

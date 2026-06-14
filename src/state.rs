@@ -10,6 +10,7 @@ pub struct AppState {
     pub current_decision: EngineDecision,
     pub current_factor: Option<InhibitFactor>,
     pub hwnd: Option<isize>,
+    pub settings_open: bool,
 }
 
 impl AppState {
@@ -20,6 +21,7 @@ impl AppState {
             current_decision: EngineDecision::Inhibit(InhibitFactor::Input),
             current_factor: Some(InhibitFactor::Input),
             hwnd: None,
+            settings_open: false,
         }
     }
 }

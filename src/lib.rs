@@ -8,6 +8,7 @@ pub mod platform;
 pub mod platform_win32;
 pub mod sleep;
 pub mod state;
+pub mod settings_gui;
 pub mod tray;
 pub mod warning;
 
