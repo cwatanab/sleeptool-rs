@@ -1,15 +1,16 @@
 use crate::config::Config;
 use crate::error::Result;
+use crate::monitors::threshold::{evaluate, ThresholdState};
 use crate::monitors::{InhibitFactor, Monitor, MonitorState};
-use crate::platform::Platform;
+use crate::platform::{PerformanceSnapshot, Platform};
 
 pub struct CpuMonitor {
-    last_active: Option<std::time::Instant>,
+    state: ThresholdState,
 }
 
 impl CpuMonitor {
     pub fn new() -> Self {
-        Self { last_active: None }
+        Self { state: ThresholdState::default() }
     }
 }
 
@@ -26,24 +27,9 @@ impl Monitor for CpuMonitor {
         config.cpu.enabled
     }
 
-    fn sample(&mut self, config: &Config, platform: &dyn Platform) -> Result<MonitorState> {
-        let perf = platform.query_performance()?;
+    fn sample(&mut self, config: &Config, _platform: &dyn Platform, perf: &PerformanceSnapshot) -> Result<MonitorState> {
         let cfg = &config.cpu;
-        let active = perf.cpu_percent >= cfg.threshold;
-
-        let now = std::time::Instant::now();
-        if active {
-            self.last_active = Some(now);
-        }
-
-        let inhibit = if active {
-            true
-        } else if let Some(last) = self.last_active {
-            now.duration_since(last).as_secs() < cfg.delay_seconds
-        } else {
-            false
-        };
-
+        let inhibit = evaluate(&mut self.state, perf.cpu_percent, cfg.threshold, cfg.delay_seconds);
         Ok(MonitorState {
             inhibit,
             factor: self.default_factor(),

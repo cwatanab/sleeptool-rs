@@ -1,7 +1,7 @@
 use crate::config::Config;
 use crate::error::Result;
 use crate::monitors::{InhibitFactor, Monitor, MonitorState};
-use crate::platform::Platform;
+use crate::platform::{InputProbe, PerformanceSnapshot, Platform};
 
 pub struct InputMonitor;
 
@@ -24,9 +24,9 @@ impl Monitor for InputMonitor {
         true
     }
 
-    fn sample(&mut self, config: &Config, platform: &dyn Platform) -> Result<MonitorState> {
-        let idle_seconds = platform.last_input_idle_seconds(config.legacy_input)?;
-        let threshold = config.sleep_delay_seconds;
+    fn sample(&mut self, config: &Config, platform: &dyn Platform, _perf: &PerformanceSnapshot) -> Result<MonitorState> {
+        let idle_seconds = InputProbe::last_input_idle_seconds(platform, config.general.legacy_input)?;
+        let threshold = config.sleep.delay_seconds;
         let inhibit = idle_seconds < threshold;
         Ok(MonitorState {
             inhibit,

@@ -1,17 +1,23 @@
 use crate::config::Config;
 use crate::error::Result;
 use crate::monitors::{
-    cpu::CpuMonitor, disk::DiskReadMonitor, disk::DiskWriteMonitor, input::InputMonitor,
-    network::NetworkMonitor, process::ProcessMonitor,
-    sound::SoundMonitor, InhibitFactor, Monitor, MonitorState,
+    cpu::CpuMonitor,
+    disk::{DiskReadMonitor, DiskWriteMonitor},
+    input::InputMonitor,
+    network::NetworkMonitor,
+    process::ProcessMonitor,
+    sound::SoundMonitor,
+    InhibitFactor, Monitor, MonitorState,
 };
-use crate::platform::Platform;
+use crate::platform::{PerformanceProbe, Platform};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum EngineDecision {
     Sleep,
-    Inhibit(InhibitFactor),
+    Inhibit(MonitorState),
     Paused,
+    /// スリープ復帰直後のクールダウン中。`remaining_secs` で残時間を返す。
+    Cooldown { remaining_secs: u64 },
 }
 
 pub struct Engine {
@@ -22,18 +28,16 @@ pub struct Engine {
 
 impl Engine {
     pub fn new(_config: &Config) -> Self {
-        let monitors: Vec<Box<dyn Monitor>> = vec![
-            Box::new(InputMonitor::new()),
-            Box::new(CpuMonitor::new()),
-            Box::new(NetworkMonitor::new()),
-            Box::new(DiskWriteMonitor::new()),
-            Box::new(SoundMonitor::new()),
-            Box::new(DiskReadMonitor::new()),
-            Box::new(ProcessMonitor::new()),
-        ];
-
         Self {
-            monitors,
+            monitors: vec![
+                Box::new(InputMonitor::new()),
+                Box::new(CpuMonitor::new()),
+                Box::new(NetworkMonitor::new()),
+                Box::new(DiskWriteMonitor::new()),
+                Box::new(SoundMonitor::new()),
+                Box::new(DiskReadMonitor::new()),
+                Box::new(ProcessMonitor::new()),
+            ],
             paused: false,
             last_resume: None,
         }
@@ -57,19 +61,22 @@ impl Engine {
         }
 
         if let Some(last_resume) = self.last_resume {
-            if last_resume.elapsed().as_secs() < config.resume_cooldown_seconds {
-                return Ok(EngineDecision::Inhibit(InhibitFactor::Input));
+            let elapsed = last_resume.elapsed().as_secs();
+            if elapsed < config.sleep.resume_cooldown_seconds {
+                let remaining = config.sleep.resume_cooldown_seconds - elapsed;
+                return Ok(EngineDecision::Cooldown { remaining_secs: remaining });
             }
         }
 
+        let perf = PerformanceProbe::query_performance(platform)?;
+
         let mut inhibits: Vec<MonitorState> = Vec::new();
-        for monitor in &mut self.monitors {
-            if !monitor.is_enabled(config) {
-                continue;
-            }
-            let state = monitor.sample(config, platform)?;
-            if state.inhibit {
-                inhibits.push(state);
+        for monitor in self.monitors.iter_mut() {
+            if monitor.is_enabled(config) {
+                let state = monitor.sample(config, platform, &perf)?;
+                if state.inhibit {
+                    inhibits.push(state);
+                }
             }
         }
 
@@ -77,7 +84,7 @@ impl Engine {
             .iter()
             .min_by_key(|s| s.factor.priority())
         {
-            return Ok(EngineDecision::Inhibit(top.factor));
+            return Ok(EngineDecision::Inhibit(*top));
         }
 
         Ok(EngineDecision::Sleep)

@@ -1,22 +1,26 @@
+use crate::config::LogLevel;
 use std::fs::OpenOptions;
-use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::io::{BufWriter, Write};
+use std::path::Path;
 use std::sync::Mutex;
 
-static LOG_FILE: Mutex<Option<PathBuf>> = Mutex::new(None);
+static LOG_WRITER: Mutex<Option<BufWriter<std::fs::File>>> = Mutex::new(None);
+static LOG_LEVEL: Mutex<LogLevel> = Mutex::new(LogLevel::Off);
 
 pub fn init_logging(log_dir: &Path) -> anyhow::Result<()> {
     std::fs::create_dir_all(log_dir)?;
     let log_path = log_dir.join("sleeptool.log");
-    // Try to open it to make sure it's writable
-    OpenOptions::new()
+    let file = OpenOptions::new()
         .create(true)
         .write(true)
         .append(true)
         .open(&log_path)?;
-    let mut guard = LOG_FILE.lock().unwrap();
-    *guard = Some(log_path);
+    *LOG_WRITER.lock().unwrap() = Some(BufWriter::new(file));
     Ok(())
+}
+
+pub fn set_log_level(level: LogLevel) {
+    *LOG_LEVEL.lock().unwrap() = level;
 }
 
 fn get_timestamp() -> String {
@@ -36,20 +40,26 @@ fn get_timestamp() -> String {
     }
 }
 
-pub fn log_message(level: &str, msg: &str) {
-    let log_path = {
-        let guard = LOG_FILE.lock().unwrap();
-        guard.clone()
-    };
-    if let Some(path) = log_path {
-        if let Ok(mut file) = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .append(true)
-            .open(&path)
-        {
-            let timestamp = get_timestamp();
-            let _ = writeln!(file, "[{}] {} - {}", timestamp, level, msg);
+fn level_str(level: LogLevel) -> &'static str {
+    match level {
+        LogLevel::Error => "ERROR",
+        LogLevel::Warn => "WARN",
+        LogLevel::Info => "INFO",
+        LogLevel::Debug => "DEBUG",
+        LogLevel::Off => "OFF",
+    }
+}
+
+pub fn log_message(level: LogLevel, msg: &str) {
+    if level > *LOG_LEVEL.lock().unwrap() {
+        return;
+    }
+
+    let timestamp = get_timestamp();
+    if let Ok(mut guard) = LOG_WRITER.lock() {
+        if let Some(ref mut writer) = *guard {
+            let _ = writeln!(writer, "[{}] {} - {}", timestamp, level_str(level), msg);
+            let _ = writer.flush();
         }
     }
 }
@@ -57,27 +67,27 @@ pub fn log_message(level: &str, msg: &str) {
 #[macro_export]
 macro_rules! info {
     ($($arg:tt)*) => {
-        $crate::logging::log_message("INFO", &format!($($arg)*));
+        $crate::logging::log_message($crate::config::LogLevel::Info, &format!($($arg)*));
     };
 }
 
 #[macro_export]
 macro_rules! error {
     ($($arg:tt)*) => {
-        $crate::logging::log_message("ERROR", &format!($($arg)*));
+        $crate::logging::log_message($crate::config::LogLevel::Error, &format!($($arg)*));
     };
 }
 
 #[macro_export]
 macro_rules! debug {
     ($($arg:tt)*) => {
-        $crate::logging::log_message("DEBUG", &format!($($arg)*));
+        $crate::logging::log_message($crate::config::LogLevel::Debug, &format!($($arg)*));
     };
 }
 
 #[macro_export]
 macro_rules! warn {
     ($($arg:tt)*) => {
-        $crate::logging::log_message("WARN", &format!($($arg)*));
+        $crate::logging::log_message($crate::config::LogLevel::Warn, &format!($($arg)*));
     };
 }

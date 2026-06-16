@@ -1,7 +1,7 @@
 use crate::config::Config;
 use crate::error::Result;
 use crate::monitors::{InhibitFactor, Monitor, MonitorState};
-use crate::platform::Platform;
+use crate::platform::{PerformanceSnapshot, Platform, ProcessProbe};
 
 pub struct ProcessMonitor;
 
@@ -21,18 +21,16 @@ impl Monitor for ProcessMonitor {
     }
 
     fn is_enabled(&self, config: &Config) -> bool {
-        !config.watched_processes.is_empty()
+        !config.process.watched.is_empty()
     }
 
-    fn sample(&mut self, config: &Config, platform: &dyn Platform) -> Result<MonitorState> {
-        let running = platform.list_running_processes()?;
+    fn sample(&mut self, config: &Config, platform: &dyn Platform, _perf: &PerformanceSnapshot) -> Result<MonitorState> {
+        let running = ProcessProbe::list_running_processes(platform)?;
         let matched = config
-            .watched_processes
+            .process
+            .watched
             .iter()
-            .any(|p| {
-                let p_lower = p.to_lowercase();
-                running.contains(&p_lower)
-            });
+            .any(|p| running.contains(p));
         Ok(MonitorState {
             inhibit: matched,
             factor: self.default_factor(),

@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::engine::EngineDecision;
-use crate::monitors::InhibitFactor;
+use crate::monitors::{InhibitFactor, MonitorState};
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone)]
@@ -19,7 +19,12 @@ impl AppState {
         Self {
             config: Arc::new(config),
             paused: false,
-            current_decision: EngineDecision::Inhibit(InhibitFactor::Input),
+            current_decision: EngineDecision::Inhibit(MonitorState {
+                inhibit: true,
+                factor: InhibitFactor::Input,
+                value: 0.0,
+                threshold: 0.0,
+            }),
             current_factor: Some(InhibitFactor::Input),
             hwnd: None,
             settings_open: false,

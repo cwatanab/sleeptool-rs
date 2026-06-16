@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::error::Result;
-use crate::platform::Platform;
+use crate::platform::{PerformanceSnapshot, Platform};
 
 pub mod cpu;
 pub mod disk;
@@ -8,6 +8,7 @@ pub mod input;
 pub mod network;
 pub mod process;
 pub mod sound;
+pub mod threshold;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum InhibitFactor {
@@ -21,7 +22,7 @@ pub enum InhibitFactor {
 }
 
 impl InhibitFactor {
-    pub fn priority(&self) -> u8 {
+    pub fn priority(self) -> u8 {
         match self {
             InhibitFactor::Process => 2,
             InhibitFactor::Sound => 3,
@@ -33,7 +34,7 @@ impl InhibitFactor {
         }
     }
 
-    pub fn label(&self) -> &'static str {
+    pub fn label(self) -> &'static str {
         match self {
             InhibitFactor::Process => "Process",
             InhibitFactor::Sound => "Sound",
@@ -46,7 +47,7 @@ impl InhibitFactor {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MonitorState {
     pub inhibit: bool,
     pub factor: InhibitFactor,
@@ -64,5 +65,5 @@ pub trait Monitor: Send {
     }
 
     fn is_enabled(&self, config: &Config) -> bool;
-    fn sample(&mut self, config: &Config, platform: &dyn Platform) -> Result<MonitorState>;
+    fn sample(&mut self, config: &Config, platform: &dyn Platform, perf: &PerformanceSnapshot) -> Result<MonitorState>;
 }

@@ -1,10 +1,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#![allow(clippy::clone_on_copy)]
 
 use sleeptool_rs::cli::Cli;
 use sleeptool_rs::config::Config;
 use sleeptool_rs::tracing;
 use sleeptool_rs::engine::{Engine, EngineDecision};
 use sleeptool_rs::logging;
+use sleeptool_rs::monitors::InhibitFactor;
 use sleeptool_rs::platform_win32::WindowsPlatform;
 use sleeptool_rs::sleep;
 use sleeptool_rs::state::{AppState, SharedState};
@@ -50,13 +52,14 @@ fn main() -> anyhow::Result<()> {
     };
 
     if cli.hibernate {
-        config.hibernate = true;
+        config.sleep.hibernate = true;
     }
     if cli.legacy_input {
-        config.legacy_input = true;
+        config.general.legacy_input = true;
     }
 
     logging::init_logging(&Config::config_dir().join("logs"))?;
+    logging::set_log_level(config.general.log_level);
 
     tracing::info!("SleepTool Rust starting...");
 
@@ -99,6 +102,8 @@ fn run_monitor(
     config: Config,
 ) -> anyhow::Result<()> {
     let mut engine = Engine::new(&config);
+    let mut prev_factor: Option<InhibitFactor> = None;
+    let mut was_paused = false;
 
     while running.load(Ordering::Relaxed) {
         std::thread::sleep(Duration::from_secs(1));
@@ -115,7 +120,7 @@ fn run_monitor(
             let mut state = state.lock().unwrap();
             state.current_decision = decision.clone();
             state.current_factor = match &decision {
-                EngineDecision::Inhibit(f) => Some(*f),
+                EngineDecision::Inhibit(ms) => Some(ms.factor),
                 _ => None,
             };
             state.hwnd
@@ -137,12 +142,36 @@ fn run_monitor(
                 tracing::info!("Conditions met, executing sleep");
                 let _ = sleep::execute_sleep(platform.as_ref(), &current_config);
                 engine.notify_resumed();
+                platform.reset_smoothing();
+                prev_factor = None;
+                was_paused = false;
             }
-            EngineDecision::Inhibit(f) => {
-                tracing::debug!("Sleep inhibited by {:?}", f);
+            EngineDecision::Inhibit(ms) => {
+                if prev_factor != Some(ms.factor) {
+                    if ms.factor == InhibitFactor::Input {
+                        tracing::debug!("Sleep inhibited by {}", ms.factor.label());
+                    } else {
+                        tracing::debug!(
+                            "Sleep inhibited by {} ({:.1} / {:.1})",
+                            ms.factor.label(),
+                            ms.value,
+                            ms.threshold,
+                        );
+                    }
+                }
+                prev_factor = Some(ms.factor);
+                was_paused = false;
             }
             EngineDecision::Paused => {
-                tracing::debug!("Monitoring paused");
+                if !was_paused {
+                    tracing::debug!("Monitoring paused");
+                }
+                was_paused = true;
+                prev_factor = None;
+            }
+            EngineDecision::Cooldown { remaining_secs } => {
+                tracing::debug!("Resume cooldown active ({}s remaining)", remaining_secs);
+                was_paused = false;
             }
         }
     }

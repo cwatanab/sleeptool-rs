@@ -1,7 +1,7 @@
 use crate::config::Config;
 use crate::error::Result;
 use crate::monitors::{InhibitFactor, Monitor, MonitorState};
-use crate::platform::Platform;
+use crate::platform::{AudioProbe, PerformanceSnapshot, Platform};
 
 pub struct SoundMonitor;
 
@@ -21,15 +21,11 @@ impl Monitor for SoundMonitor {
     }
 
     fn is_enabled(&self, config: &Config) -> bool {
-        config.sound_enabled
+        config.sound.enabled
     }
 
-    fn sample(&mut self, config: &Config, platform: &dyn Platform) -> Result<MonitorState> {
-        let rms = if self.is_enabled(config) {
-            platform.current_sound_rms()?
-        } else {
-            0.0
-        };
+    fn sample(&mut self, _config: &Config, platform: &dyn Platform, _perf: &PerformanceSnapshot) -> Result<MonitorState> {
+        let rms = AudioProbe::current_sound_rms(platform)?;
         let threshold = 0.01;
         Ok(MonitorState {
             inhibit: rms >= threshold,
