@@ -23,26 +23,25 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW, GetWindowLongPtrW,
     HMENU, PostMessageW, PostQuitMessage, RegisterClassW, SetWindowLongPtrW, TranslateMessage,
     CREATESTRUCTW, GWLP_USERDATA, MSG, WNDCLASSW, WM_CREATE, WM_DESTROY, WM_LBUTTONDBLCLK,
-    WM_RBUTTONUP, WM_USER, WS_POPUP,
+    WM_RBUTTONUP, WM_SETTINGCHANGE, WM_USER, WS_POPUP,
 };
 
-use crate::config::Config;
 use crate::monitors::InhibitFactor;
+use crate::platform::PerformanceProbe;
 use crate::platform_win32::WindowsPlatform;
 use crate::state::SharedState;
 
 pub const WM_TRAYICON: u32 = WM_USER + 1;
 pub const WM_UPDATE_TRAY: u32 = WM_USER + 2;
 
-use icon::IconSet;
+use icon::ThemeIconSet;
 
 struct TrayContext {
     state: SharedState,
     running: Arc<AtomicBool>,
     platform: Arc<WindowsPlatform>,
     hwnd: HWND,
-    icons: IconSet,
-    current_hicon: windows::Win32::UI::WindowsAndMessaging::HICON,
+    icons: ThemeIconSet,
 }
 
 unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
@@ -62,7 +61,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
                 uID: 1,
                 uFlags: NIF_ICON | NIF_MESSAGE | NIF_TIP,
                 uCallbackMessage: WM_TRAYICON,
-                hIcon: ctx.icons.default,
+                hIcon: ctx.icons.pick(None, false),
                 ..Default::default()
             };
             icon::set_tooltip(&mut nid, "SleepTool Rust");
@@ -85,6 +84,11 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
             PostQuitMessage(0);
             return LRESULT(0);
         }
+        WM_SETTINGCHANGE => {
+            icon::update_dark_mode();
+            let _ = PostMessageW(hwnd, WM_UPDATE_TRAY, WPARAM(0), LPARAM(0));
+            return LRESULT(0);
+        }
         WM_UPDATE_TRAY => {
             let ctx_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA);
             if ctx_ptr != 0 {
@@ -95,25 +99,25 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
                 };
 
                 let target = ctx.icons.pick(current_factor, paused);
-                ctx.current_hicon = if display_state_by_icon {
+                let hicon = if display_state_by_icon {
                     target
                 } else if paused {
-                    ctx.icons.paused
+                    ctx.icons.pick(None, true)
                 } else {
-                    ctx.icons.default
+                    ctx.icons.pick(None, false)
                 };
 
-                let tooltip = tooltip_text(current_factor, paused);
+                let tooltip = tooltip_text(current_factor, paused, &ctx.platform);
 
                 let mut nid = NOTIFYICONDATAW {
                     cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
                     hWnd: hwnd,
                     uID: 1,
                     uFlags: NIF_ICON | NIF_TIP,
-                    hIcon: ctx.current_hicon,
+                    hIcon: hicon,
                     ..Default::default()
                 };
-                icon::set_tooltip(&mut nid, tooltip);
+                icon::set_tooltip(&mut nid, &tooltip);
                 let _ = Shell_NotifyIconW(NIM_MODIFY, &nid);
             }
             return LRESULT(0);
@@ -126,7 +130,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
                     let ctx = &mut *(ctx_ptr as *mut TrayContext);
                     let mut s = ctx.state.lock().unwrap();
                     s.paused = !s.paused;
-                    let _ = s.config.save(&Config::config_path());
+                    let _ = s.config.save(&s.config_path.clone());
                     let _ = PostMessageW(hwnd, WM_UPDATE_TRAY, WPARAM(0), LPARAM(0));
                 }
                 return LRESULT(0);
@@ -152,36 +156,106 @@ unsafe fn handle_menu_choice(hwnd: HWND, ctx: &mut TrayContext, choice: menu::Me
         menu::MenuChoice::Pause => {
             let mut s = ctx.state.lock().unwrap();
             s.paused = !s.paused;
-            let _ = s.config.save(&Config::config_path());
+            let _ = s.config.save(&s.config_path.clone());
             let _ = PostMessageW(hwnd, WM_UPDATE_TRAY, WPARAM(0), LPARAM(0));
-        }
-        menu::MenuChoice::Settings => {
-            let state = ctx.state.clone();
-            let platform = ctx.platform.clone();
-            let hwnd_isize = hwnd.0 as isize;
-            drop(ctx.state.lock().unwrap()); // release lock before re-entrant call
-            crate::settings_gui::show_settings_window(state, platform, Some(hwnd_isize));
         }
         menu::MenuChoice::Quit => {
             ctx.running.store(false, Ordering::Relaxed);
             let _ = DestroyWindow(hwnd);
         }
+        menu::MenuChoice::SetCpu(value) => {
+            let (config_path, new_config) = {
+                let s = ctx.state.lock().unwrap();
+                let mut cfg = (*s.config).clone();
+                if let Some(v) = value {
+                    cfg.cpu.enabled = true;
+                    cfg.cpu.threshold = v;
+                } else {
+                    cfg.cpu.enabled = false;
+                }
+                (s.config_path.clone(), cfg)
+            };
+            let _ = new_config.save(&config_path);
+            let mut s = ctx.state.lock().unwrap();
+            s.config = Arc::new(new_config);
+        }
+        menu::MenuChoice::SetNetwork(value) => {
+            let (config_path, new_config) = {
+                let s = ctx.state.lock().unwrap();
+                let mut cfg = (*s.config).clone();
+                if let Some(v) = value {
+                    cfg.network.enabled = true;
+                    cfg.network.threshold = v;
+                } else {
+                    cfg.network.enabled = false;
+                }
+                (s.config_path.clone(), cfg)
+            };
+            let _ = new_config.save(&config_path);
+            let mut s = ctx.state.lock().unwrap();
+            s.config = Arc::new(new_config);
+        }
+        menu::MenuChoice::SetDiskWrite(value) => {
+            let (config_path, new_config) = {
+                let s = ctx.state.lock().unwrap();
+                let mut cfg = (*s.config).clone();
+                if let Some(v) = value {
+                    cfg.disk.write_enabled = true;
+                    cfg.disk.write_threshold = v;
+                } else {
+                    cfg.disk.write_enabled = false;
+                }
+                (s.config_path.clone(), cfg)
+            };
+            let _ = new_config.save(&config_path);
+            let mut s = ctx.state.lock().unwrap();
+            s.config = Arc::new(new_config);
+        }
+        menu::MenuChoice::Toggle(toggle) => {
+            let (config_path, new_config) = {
+                let s = ctx.state.lock().unwrap();
+                let mut cfg = (*s.config).clone();
+                match toggle {
+                    menu::Toggle::Hibernate => cfg.sleep.hibernate = !cfg.sleep.hibernate,
+                    menu::Toggle::WarnBeforeSleep => cfg.sleep.warn_before_sleep = !cfg.sleep.warn_before_sleep,
+                    menu::Toggle::DisplayOffOnSleep => cfg.general.display_off_on_sleep = !cfg.general.display_off_on_sleep,
+                    menu::Toggle::SoundMonitor => cfg.sound.enabled = !cfg.sound.enabled,
+                }
+                (s.config_path.clone(), cfg)
+            };
+            let _ = new_config.save(&config_path);
+            let mut s = ctx.state.lock().unwrap();
+            s.config = Arc::new(new_config);
+        }
     }
 }
 
-fn tooltip_text(factor: Option<InhibitFactor>, paused: bool) -> &'static str {
-    if paused {
-        return "SleepTool Rust (一時停止中)";
-    }
-    match factor {
-        Some(InhibitFactor::Process) => "SleepTool Rust - プロセス実行中",
-        Some(InhibitFactor::Sound) => "SleepTool Rust - サウンド出力中",
-        Some(InhibitFactor::Cpu) => "SleepTool Rust - CPU使用中",
-        Some(InhibitFactor::Network) => "SleepTool Rust - ネットワーク使用中",
-        Some(InhibitFactor::DiskRead) => "SleepTool Rust - ディスク読み込み中",
-        Some(InhibitFactor::DiskWrite) => "SleepTool Rust - ディスク書き込み中",
-        Some(InhibitFactor::Input) => "SleepTool Rust - 入力検知中",
-        None => "SleepTool Rust",
+fn tooltip_text(factor: Option<InhibitFactor>, paused: bool, platform: &Arc<WindowsPlatform>) -> String {
+    let status = if paused {
+        "SleepTool Rust (一時停止中)"
+    } else {
+        match factor {
+            Some(InhibitFactor::Process) => "SleepTool Rust - プロセス実行中",
+            Some(InhibitFactor::Sound) => "SleepTool Rust - サウンド出力中",
+            Some(InhibitFactor::Cpu) => "SleepTool Rust - CPU使用中",
+            Some(InhibitFactor::Network) => "SleepTool Rust - ネットワーク使用中",
+            Some(InhibitFactor::DiskRead) => "SleepTool Rust - ディスク読み込み中",
+            Some(InhibitFactor::DiskWrite) => "SleepTool Rust - ディスク書き込み中",
+            Some(InhibitFactor::Input) => "SleepTool Rust - 入力検知中",
+            None => "SleepTool Rust",
+        }
+    };
+
+    if let Ok(snapshot) = PerformanceProbe::query_performance(platform.as_ref()) {
+        format!(
+            "{}\n⚡CPU:{:.0}%  🌐Network:{:.1}KB/s  💾Disk:{:.1}KB/s",
+            status,
+            snapshot.cpu_percent,
+            snapshot.network_bytes_per_sec / 1000.0,
+            snapshot.disk_write_bytes_per_sec / 1000.0,
+        )
+    } else {
+        status.to_string()
     }
 }
 
@@ -199,8 +273,7 @@ pub fn run_tray(state: SharedState, running: Arc<AtomicBool>, platform: Arc<Wind
 
         RegisterClassW(&wnd_class);
 
-        let icons = IconSet::load()?;
-        let default_hicon = icons.default;
+        let icons = ThemeIconSet::load()?;
 
         let ctx_box = Box::new(TrayContext {
             state: state.clone(),
@@ -208,7 +281,6 @@ pub fn run_tray(state: SharedState, running: Arc<AtomicBool>, platform: Arc<Wind
             platform: platform.clone(),
             hwnd: HWND::default(),
             icons,
-            current_hicon: default_hicon,
         });
 
         let ctx_ptr = Box::into_raw(ctx_box);

@@ -2,7 +2,7 @@
 #![allow(clippy::clone_on_copy)]
 
 use sleeptool_rs::cli::Cli;
-use sleeptool_rs::config::Config;
+use sleeptool_rs::config::{Config, LogLevel};
 use sleeptool_rs::tracing;
 use sleeptool_rs::engine::{Engine, EngineDecision};
 use sleeptool_rs::logging;
@@ -41,12 +41,15 @@ fn main() -> anyhow::Result<()> {
     ensure_single_instance()?;
     let cli = Cli::parse();
 
-    let config_path = Config::config_path();
+    let config_path = Config::find_config_path();
     std::fs::create_dir_all(Config::config_dir())?;
     let mut config = if config_path.exists() {
         Config::load(&config_path)?
     } else {
         let default = Config::default();
+        if let Some(parent) = config_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
         default.save(&config_path)?;
         default
     };
@@ -58,14 +61,16 @@ fn main() -> anyhow::Result<()> {
         config.general.legacy_input = true;
     }
 
-    logging::init_logging(&Config::config_dir().join("logs"))?;
+    if config.general.log_level != LogLevel::Off {
+        logging::init_logging(&Config::config_dir().join("logs"))?;
+    }
     logging::set_log_level(config.general.log_level);
 
     tracing::info!("SleepTool Rust starting...");
 
     let platform = Arc::new(WindowsPlatform::new()?);
 
-    let state: SharedState = Arc::new(Mutex::new(AppState::new(config.clone())));
+    let state: SharedState = Arc::new(Mutex::new(AppState::new(config.clone(), config_path)));
     let running = Arc::new(AtomicBool::new(true));
 
     let monitor_state = state.clone();

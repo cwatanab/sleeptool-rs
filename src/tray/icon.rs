@@ -7,6 +7,8 @@
 //! - 1 バイト目 `0`: 非圧縮。残りはそのまま RGBA 列。
 //! - 1 バイト目 `1`: パレット圧縮。2 バイト目がパレット長-1。
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::Gdi::{
@@ -18,6 +20,37 @@ use windows::Win32::UI::WindowsAndMessaging::{CreateIconIndirect, HICON, ICONINF
 use crate::monitors::InhibitFactor;
 
 include!(concat!(env!("OUT_DIR"), "/icons_data.rs"));
+
+static DARK_MODE: AtomicBool = AtomicBool::new(false);
+
+pub fn is_dark_mode() -> bool {
+    DARK_MODE.load(Ordering::Relaxed)
+}
+
+pub fn update_dark_mode() {
+    use windows::Win32::System::Registry::{
+        RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD,
+    };
+    let path: Vec<u16> =
+        "Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize\0"
+            .encode_utf16()
+            .collect();
+    let mut value: u32 = 1;
+    let mut size: u32 = 4;
+    unsafe {
+        let _ = RegGetValueW(
+            HKEY_CURRENT_USER,
+            PCWSTR(path.as_ptr()),
+            windows::core::w!("AppsUseLightTheme"),
+            RRF_RT_REG_DWORD,
+            None,
+            Some(&mut value as *mut _ as *mut _),
+            Some(&mut size),
+        );
+    }
+    // AppsUseLightTheme == 0 → dark mode
+    DARK_MODE.store(value == 0, Ordering::Relaxed);
+}
 
 /// 内部表現（パレット圧縮 / 非圧縮）を RGBA バイト列に展開。
 pub fn decompact(data: &[u8]) -> Vec<u8> {
@@ -96,7 +129,7 @@ pub unsafe fn create_hicon(rgba: &[u8], width: i32, height: i32) -> windows::cor
     Ok(hicon)
 }
 
-/// アイコン名（"default", "cpu", "network", "disk", "sound", "process", "paused"）
+/// アイコン名（"default", "cpu", ...）および "_dark" サフィックス付き
 /// に対応する `HICON` を作成する。
 pub fn load_handle(name: &str) -> anyhow::Result<HICON> {
     let data: &[u8] = match name {
@@ -107,11 +140,22 @@ pub fn load_handle(name: &str) -> anyhow::Result<HICON> {
         "sound" => ICON_SOUND,
         "process" => ICON_PROCESS,
         "paused" => ICON_PAUSED,
+        "input" => ICON_INPUT,
+        "default_dark" => ICON_DEFAULT_DARK,
+        "cpu_dark" => ICON_CPU_DARK,
+        "network_dark" => ICON_NETWORK_DARK,
+        "disk_dark" => ICON_DISK_DARK,
+        "sound_dark" => ICON_SOUND_DARK,
+        "process_dark" => ICON_PROCESS_DARK,
+        "paused_dark" => ICON_PAUSED_DARK,
+        "input_dark" => ICON_INPUT_DARK,
         _ => ICON_DEFAULT,
     };
     let rgba = decompact(data);
+    let pixel_count = (rgba.len() / 4) as i32;
+    let size = (pixel_count as f64).sqrt() as i32;
     unsafe {
-        create_hicon(&rgba, 32, 32)
+        create_hicon(&rgba, size, size)
             .map_err(|e| anyhow::anyhow!("GDI error: {:?}", e))
     }
 }
@@ -120,6 +164,7 @@ pub fn load_handle(name: &str) -> anyhow::Result<HICON> {
 pub struct IconSet {
     pub default: HICON,
     pub paused: HICON,
+    pub input: HICON,
     pub cpu: HICON,
     pub network: HICON,
     pub disk: HICON,
@@ -128,19 +173,19 @@ pub struct IconSet {
 }
 
 impl IconSet {
-    pub fn load() -> anyhow::Result<Self> {
+    fn load_suffix(suffix: &str) -> anyhow::Result<Self> {
         Ok(Self {
-            default: load_handle("default")?,
-            paused: load_handle("paused")?,
-            cpu: load_handle("cpu")?,
-            network: load_handle("network")?,
-            disk: load_handle("disk")?,
-            sound: load_handle("sound")?,
-            process: load_handle("process")?,
+            default: load_handle(&format!("default{}", suffix))?,
+            paused: load_handle(&format!("paused{}", suffix))?,
+            input: load_handle(&format!("input{}", suffix))?,
+            cpu: load_handle(&format!("cpu{}", suffix))?,
+            network: load_handle(&format!("network{}", suffix))?,
+            disk: load_handle(&format!("disk{}", suffix))?,
+            sound: load_handle(&format!("sound{}", suffix))?,
+            process: load_handle(&format!("process{}", suffix))?,
         })
     }
 
-    /// 現在の inhibit factor / ポーズ状態から表示すべきアイコンを選択する。
     pub fn pick(&self, factor: Option<InhibitFactor>, paused: bool) -> HICON {
         if paused {
             return self.paused;
@@ -151,7 +196,8 @@ impl IconSet {
             Some(InhibitFactor::Cpu) => self.cpu,
             Some(InhibitFactor::Network) => self.network,
             Some(InhibitFactor::DiskRead) | Some(InhibitFactor::DiskWrite) => self.disk,
-            Some(InhibitFactor::Input) | None => self.default,
+            Some(InhibitFactor::Input) => self.input,
+            None => self.default,
         }
     }
 }
@@ -161,12 +207,38 @@ impl Drop for IconSet {
         unsafe {
             let _ = windows::Win32::UI::WindowsAndMessaging::DestroyIcon(self.default);
             let _ = windows::Win32::UI::WindowsAndMessaging::DestroyIcon(self.paused);
+            let _ = windows::Win32::UI::WindowsAndMessaging::DestroyIcon(self.input);
             let _ = windows::Win32::UI::WindowsAndMessaging::DestroyIcon(self.cpu);
             let _ = windows::Win32::UI::WindowsAndMessaging::DestroyIcon(self.network);
             let _ = windows::Win32::UI::WindowsAndMessaging::DestroyIcon(self.disk);
             let _ = windows::Win32::UI::WindowsAndMessaging::DestroyIcon(self.sound);
             let _ = windows::Win32::UI::WindowsAndMessaging::DestroyIcon(self.process);
         }
+    }
+}
+
+/// 明暗両テーマのアイコンセット。テーマに応じて適切なアイコンを返す。
+pub struct ThemeIconSet {
+    light: IconSet,
+    dark: IconSet,
+    current: HICON,
+}
+
+impl ThemeIconSet {
+    pub fn load() -> anyhow::Result<Self> {
+        update_dark_mode();
+        let light = IconSet::load_suffix("")?;
+        let dark = IconSet::load_suffix("_dark")?;
+        let current = if is_dark_mode() { dark.default } else { light.default };
+        Ok(Self { light, dark, current })
+    }
+
+    pub fn pick(&self, factor: Option<InhibitFactor>, paused: bool) -> HICON {
+        if is_dark_mode() { &self.dark } else { &self.light }.pick(factor, paused)
+    }
+
+    pub fn current(&self) -> HICON {
+        self.current
     }
 }
 

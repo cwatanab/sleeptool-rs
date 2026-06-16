@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::error::{Result, SleepToolError};
 
@@ -235,5 +235,23 @@ impl Config {
 
     pub fn config_path() -> std::path::PathBuf {
         Self::config_dir().join("config.toml")
+    }
+
+    pub fn find_config_path() -> PathBuf {
+        if let Ok(exe_path) = std::env::current_exe() {
+            if let Some(exe_dir) = exe_path.parent() {
+                if let Some(stem) = exe_path.file_stem() {
+                    let portable_path = exe_dir.join(format!("{}.toml", stem.to_string_lossy()));
+                    if portable_path.exists() {
+                        return portable_path;
+                    }
+                }
+                let portable_config = exe_dir.join("config.toml");
+                if portable_config.exists() {
+                    return portable_config;
+                }
+            }
+        }
+        Self::config_path()
     }
 }

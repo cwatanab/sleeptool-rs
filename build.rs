@@ -5,9 +5,48 @@ use std::fs;
 use std::path::Path;
 
 fn main() {
-    embed_resource::compile("resources.rc", embed_resource::NONE);
-
     let icons_dir = Path::new("assets/icons");
+    let _ = fs::create_dir_all(icons_dir);
+    let ico_src = Path::new("assets");
+
+    embed_resource::compile("resources.rc", embed_resource::NONE);
+    let mappings = [
+        ("cpu.ico", "cpu"),
+        ("default.ico", "default"),
+        ("disk.ico", "disk"),
+        ("input.ico", "input"),
+        ("network.ico", "network"),
+        ("pause.ico", "paused"),
+        ("process.ico", "process"),
+        ("sound.ico", "sound"),
+    ];
+
+    // 推奨サイズ（大きい順に試す）
+    const PREFERRED_SIZES: [u32; 3] = [48, 32, 16];
+
+    for (ico_name, out_name) in &mappings {
+        let ico_path = ico_src.join(ico_name);
+        if !ico_path.exists() { continue; }
+
+        // 全サイズを抽出
+        let all_sizes = extract_all_rgba_from_ico(&ico_path, &PREFERRED_SIZES);
+        if all_sizes.is_empty() { continue; }
+
+        // 最大サイズをメインとして保存
+        let (main_w, _, main_rgba) = &all_sizes[0];
+        generate_icon(icons_dir, out_name, main_rgba);
+        generate_icon(icons_dir, &format!("{}_dark", out_name), &invert_rgba(main_rgba));
+
+        // 残りのサイズも個別に保存（将来DPI対応用）
+        for (w, _, rgba) in all_sizes.iter().skip(1) {
+            if *w != *main_w {
+                let suffix = format!("{}_{}", out_name, w);
+                generate_icon(icons_dir, &suffix, rgba);
+                generate_icon(icons_dir, &format!("{}_dark", &suffix), &invert_rgba(rgba));
+            }
+        }
+    }
+
     let out_dir = std::env::var("OUT_DIR").unwrap();
     let out_path = Path::new(&out_dir).join("icons_data.rs");
 
@@ -33,9 +72,131 @@ fn main() {
     fs::write(&out_path, out).expect("Failed to write icons_data.rs");
 }
 
+/// .ico から指定サイズの RGBA を全抽出。大きい順で返す。
+fn extract_all_rgba_from_ico(path: &Path, preferred_sizes: &[u32]) -> Vec<(u32, u32, Vec<u8>)> {
+    let data = match fs::read(path) {
+        Ok(d) => d,
+        Err(_) => return vec![],
+    };
+    if data.len() < 6 {
+        return vec![];
+    }
+    let count = u16::from_le_bytes([data[4], data[5]]) as usize;
+    if count == 0 {
+        return vec![];
+    }
+
+    let mut results: Vec<(u32, u32, Vec<u8>)> = vec![];
+
+    for i in 0..count {
+        let offset = 6 + i * 16;
+        if offset + 16 > data.len() { break; }
+        let w = if data[offset] == 0 { 256 } else { data[offset] as u32 };
+        let h = if data[offset + 1] == 0 { 256 } else { data[offset + 1] as u32 };
+        let img_size = u32::from_le_bytes([
+            data[offset + 8], data[offset + 9], data[offset + 10], data[offset + 11],
+        ]) as usize;
+        let img_offset = u32::from_le_bytes([
+            data[offset + 12], data[offset + 13], data[offset + 14], data[offset + 15],
+        ]) as usize;
+
+        // 推奨サイズのみ
+        if !preferred_sizes.contains(&w) || w != h {
+            continue;
+        }
+        if img_offset + img_size > data.len() {
+            continue;
+        }
+
+        let img_data = &data[img_offset..img_offset + img_size];
+
+        let rgba = if img_data.len() >= 4 && &img_data[0..4] == b"\x89PNG" {
+            decode_png_rgba_any(img_data)
+        } else {
+            decode_bmp_rgba(img_data, w, h)
+        };
+
+        if let Some(rgba) = rgba {
+            results.push((w, h, rgba));
+        }
+    }
+
+    // 大きい順ソート
+    results.sort_by(|a, b| b.0.cmp(&a.0));
+    results
+}
+
+fn decode_png_rgba_any(data: &[u8]) -> Option<Vec<u8>> {
+    let decoder = png::Decoder::new(std::io::Cursor::new(data));
+    let mut reader = decoder.read_info().ok()?;
+    let color_type = reader.info().color_type;
+    let w = reader.info().width as usize;
+    let h = reader.info().height as usize;
+    let mut rgba = vec![0u8; w * h * 4];
+    reader.next_frame(&mut rgba).ok()?;
+    if matches!(color_type, png::ColorType::Rgba) {
+        Some(rgba)
+    } else if color_type == png::ColorType::Rgb {
+        let mut rgba_out = vec![0u8; w * h * 4];
+        for i in 0..(w * h) {
+            rgba_out[i * 4] = rgba[i * 3];
+            rgba_out[i * 4 + 1] = rgba[i * 3 + 1];
+            rgba_out[i * 4 + 2] = rgba[i * 3 + 2];
+            rgba_out[i * 4 + 3] = 255;
+        }
+        Some(rgba_out)
+    } else {
+        None
+    }
+}
+
+fn decode_bmp_rgba(data: &[u8], w: u32, h: u32) -> Option<Vec<u8>> {
+    if data.len() < 40 { return None; }
+    let bi_height = i32::from_le_bytes([
+        data[8], data[9], data[10], data[11],
+    ]);
+    let top_down = bi_height < 0;
+    let xor_size = (w as usize) * (h as usize) * 4;
+    if 40 + xor_size > data.len() { return None; }
+
+    let mut rgba = vec![0u8; xor_size];
+    let src = &data[40..40 + xor_size];
+    for y in 0..h {
+        let src_row = if top_down {
+            (y * w * 4) as usize
+        } else {
+            ((h - 1 - y) * w * 4) as usize
+        };
+        let dst_row = (y * w * 4) as usize;
+        for x in 0..w as usize {
+            let s = src_row + x * 4;
+            let d = dst_row + x * 4;
+            rgba[d] = src[s + 2];
+            rgba[d + 1] = src[s + 1];
+            rgba[d + 2] = src[s];
+            rgba[d + 3] = src[s + 3];
+        }
+    }
+    Some(rgba)
+}
+
+fn invert_rgba(rgba: &[u8]) -> Vec<u8> {
+    let mut out = rgba.to_vec();
+    for i in (0..out.len()).step_by(4) {
+        out[i] = 255 - out[i];
+        out[i + 1] = 255 - out[i + 1];
+        out[i + 2] = 255 - out[i + 2];
+    }
+    out
+}
+
+fn generate_icon(dir: &Path, name: &str, rgba: &[u8]) {
+    let path = dir.join(format!("{}.rgba", name));
+    fs::write(&path, rgba).expect("Failed to write icon file");
+}
+
 fn quantize_rgba(rgba: &[u8]) -> Vec<u8> {
     let pixel_count = rgba.len() / 4;
-
     let mut color_map: HashMap<[u8; 4], u8> = HashMap::new();
     let mut palette: Vec<[u8; 4]> = Vec::new();
     let mut indices: Vec<u8> = Vec::with_capacity(pixel_count);
