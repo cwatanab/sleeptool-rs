@@ -1,11 +1,4 @@
 //! タスクトレイアイコンとメニュー。
-//!
-//! 構成:
-//! - `icon`: アイコン画像の管理
-//! - `menu`: 右クリックメニュー
-//!
-//! エントリポイントは `run_tray`。内部の `wnd_proc` が WM_TRAYICON /
-//! WM_UPDATE_TRAY / WM_LBUTTONDBLCLK などを処理する。
 
 mod icon;
 mod menu;
@@ -16,8 +9,7 @@ use std::sync::Arc;
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM, HINSTANCE};
 use windows::Win32::UI::Shell::{
-    Shell_NotifyIconW, NOTIFYICONDATAW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE,
-    NIM_MODIFY,
+    Shell_NotifyIconW, NOTIFYICONDATAW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW, GetWindowLongPtrW,
@@ -66,7 +58,6 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
             };
             icon::set_tooltip(&mut nid, "SleepTool Rust");
             let _ = Shell_NotifyIconW(NIM_ADD, &nid);
-
             return LRESULT(0);
         }
         WM_DESTROY => {
@@ -99,13 +90,9 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
                 };
 
                 let target = ctx.icons.pick(current_factor, paused);
-                let hicon = if display_state_by_icon {
-                    target
-                } else if paused {
-                    ctx.icons.pick(None, true)
-                } else {
-                    ctx.icons.pick(None, false)
-                };
+                let hicon = if display_state_by_icon { target }
+                    else if paused { ctx.icons.pick(None, true) }
+                    else { ctx.icons.pick(None, false) };
 
                 let tooltip = tooltip_text(current_factor, paused, &ctx.platform);
 
@@ -150,112 +137,72 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
     DefWindowProcW(hwnd, msg, wparam, lparam)
 }
 
+fn update_config(state: &SharedState, modify: impl FnOnce(&mut crate::config::Config)) {
+    let (path, new_config) = {
+        let s = state.lock().unwrap();
+        let mut cfg = (*s.config).clone();
+        modify(&mut cfg);
+        (s.config_path.clone(), cfg)
+    };
+    let _ = new_config.save(&path);
+    let mut s = state.lock().unwrap();
+    s.config = Arc::new(new_config);
+}
+
 unsafe fn handle_menu_choice(hwnd: HWND, ctx: &mut TrayContext, choice: menu::MenuChoice) {
     match choice {
         menu::MenuChoice::None => {}
         menu::MenuChoice::Pause => {
             let mut s = ctx.state.lock().unwrap();
             s.paused = !s.paused;
-            let _ = s.config.save(&s.config_path.clone());
+            let _ = s.config.save(&s.config_path);
             let _ = PostMessageW(hwnd, WM_UPDATE_TRAY, WPARAM(0), LPARAM(0));
         }
         menu::MenuChoice::Quit => {
             ctx.running.store(false, Ordering::Relaxed);
             let _ = DestroyWindow(hwnd);
         }
-        menu::MenuChoice::SetCpu(value) => {
-            let (config_path, new_config) = {
-                let s = ctx.state.lock().unwrap();
-                let mut cfg = (*s.config).clone();
-                if let Some(v) = value {
-                    cfg.cpu.enabled = true;
-                    cfg.cpu.threshold = v;
-                } else {
-                    cfg.cpu.enabled = false;
-                }
-                (s.config_path.clone(), cfg)
-            };
-            let _ = new_config.save(&config_path);
-            let mut s = ctx.state.lock().unwrap();
-            s.config = Arc::new(new_config);
-        }
-        menu::MenuChoice::SetNetwork(value) => {
-            let (config_path, new_config) = {
-                let s = ctx.state.lock().unwrap();
-                let mut cfg = (*s.config).clone();
-                if let Some(v) = value {
-                    cfg.network.enabled = true;
-                    cfg.network.threshold = v;
-                } else {
-                    cfg.network.enabled = false;
-                }
-                (s.config_path.clone(), cfg)
-            };
-            let _ = new_config.save(&config_path);
-            let mut s = ctx.state.lock().unwrap();
-            s.config = Arc::new(new_config);
-        }
-        menu::MenuChoice::SetDiskWrite(value) => {
-            let (config_path, new_config) = {
-                let s = ctx.state.lock().unwrap();
-                let mut cfg = (*s.config).clone();
-                if let Some(v) = value {
-                    cfg.disk.write_enabled = true;
-                    cfg.disk.write_threshold = v;
-                } else {
-                    cfg.disk.write_enabled = false;
-                }
-                (s.config_path.clone(), cfg)
-            };
-            let _ = new_config.save(&config_path);
-            let mut s = ctx.state.lock().unwrap();
-            s.config = Arc::new(new_config);
-        }
-        menu::MenuChoice::Toggle(toggle) => {
-            let (config_path, new_config) = {
-                let s = ctx.state.lock().unwrap();
-                let mut cfg = (*s.config).clone();
-                match toggle {
-                    menu::Toggle::Hibernate => cfg.sleep.hibernate = !cfg.sleep.hibernate,
-                    menu::Toggle::WarnBeforeSleep => cfg.sleep.warn_before_sleep = !cfg.sleep.warn_before_sleep,
-                    menu::Toggle::DisplayOffOnSleep => cfg.general.display_off_on_sleep = !cfg.general.display_off_on_sleep,
-                    menu::Toggle::SoundMonitor => cfg.sound.enabled = !cfg.sound.enabled,
-                }
-                (s.config_path.clone(), cfg)
-            };
-            let _ = new_config.save(&config_path);
-            let mut s = ctx.state.lock().unwrap();
-            s.config = Arc::new(new_config);
-        }
+        menu::MenuChoice::SetCpu(v) => update_config(&ctx.state, |c| {
+            if let Some(t) = v { c.cpu.enabled = true; c.cpu.threshold = t; } else { c.cpu.enabled = false; }
+        }),
+        menu::MenuChoice::SetNetwork(v) => update_config(&ctx.state, |c| {
+            if let Some(t) = v { c.network.enabled = true; c.network.threshold = t; } else { c.network.enabled = false; }
+        }),
+        menu::MenuChoice::SetDiskWrite(v) => update_config(&ctx.state, |c| {
+            if let Some(t) = v { c.disk.write_enabled = true; c.disk.write_threshold = t; } else { c.disk.write_enabled = false; }
+        }),
+        menu::MenuChoice::Toggle(t) => update_config(&ctx.state, |c| match t {
+            menu::Toggle::Hibernate => c.sleep.hibernate = !c.sleep.hibernate,
+            menu::Toggle::WarnBeforeSleep => c.sleep.warn_before_sleep = !c.sleep.warn_before_sleep,
+            menu::Toggle::DisplayOffOnSleep => c.general.display_off_on_sleep = !c.general.display_off_on_sleep,
+            menu::Toggle::SoundMonitor => c.sound.enabled = !c.sound.enabled,
+        }),
     }
 }
 
 fn tooltip_text(factor: Option<InhibitFactor>, paused: bool, platform: &Arc<WindowsPlatform>) -> String {
-    let status = if paused {
-        "SleepTool Rust (一時停止中)"
-    } else {
-        match factor {
-            Some(InhibitFactor::Process) => "SleepTool Rust - プロセス実行中",
-            Some(InhibitFactor::Sound) => "SleepTool Rust - サウンド出力中",
-            Some(InhibitFactor::Cpu) => "SleepTool Rust - CPU使用中",
-            Some(InhibitFactor::Network) => "SleepTool Rust - ネットワーク使用中",
-            Some(InhibitFactor::DiskRead) => "SleepTool Rust - ディスク読み込み中",
-            Some(InhibitFactor::DiskWrite) => "SleepTool Rust - ディスク書き込み中",
-            Some(InhibitFactor::Input) => "SleepTool Rust - 入力検知中",
-            None => "SleepTool Rust",
-        }
+    let status = match (paused, factor) {
+        (true, _) => "SleepTool Rust (一時停止中)",
+        (_, Some(InhibitFactor::Process)) => "SleepTool Rust - プロセス実行中",
+        (_, Some(InhibitFactor::Sound)) => "SleepTool Rust - サウンド出力中",
+        (_, Some(InhibitFactor::Cpu)) => "SleepTool Rust - CPU使用中",
+        (_, Some(InhibitFactor::Network)) => "SleepTool Rust - ネットワーク使用中",
+        (_, Some(InhibitFactor::DiskRead)) => "SleepTool Rust - ディスク読み込み中",
+        (_, Some(InhibitFactor::DiskWrite)) => "SleepTool Rust - ディスク書き込み中",
+        (_, Some(InhibitFactor::Input)) => "SleepTool Rust - 入力検知中",
+        (_, None) => "SleepTool Rust",
     };
 
-    if let Ok(snapshot) = PerformanceProbe::query_performance(platform.as_ref()) {
-        format!(
-            "{}\n⚡CPU:{:.0}%  🌐Network:{:.1}KB/s  💾Disk:{:.1}KB/s",
-            status,
-            snapshot.cpu_percent,
-            snapshot.network_bytes_per_sec / 1000.0,
-            snapshot.disk_write_bytes_per_sec / 1000.0,
-        )
-    } else {
-        status.to_string()
+    match PerformanceProbe::query_performance(platform.as_ref()) {
+        Ok(s) => {
+            use std::fmt::Write;
+            let mut out = String::with_capacity(status.len() + 64);
+            out.push_str(status);
+            let _ = write!(out, "\n⚡CPU:{:.0}%  🌐Network:{:.1}KB/s  💾Disk:{:.1}KB/s",
+                s.cpu_percent, s.network_bytes_per_sec / 1000.0, s.disk_write_bytes_per_sec / 1000.0);
+            out
+        }
+        Err(_) => status.to_string(),
     }
 }
 

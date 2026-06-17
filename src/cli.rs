@@ -1,9 +1,6 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cli {
-    /// Use hibernate mode instead of sleep
     pub hibernate: bool,
-
-    /// Use legacy input detection method
     pub legacy_input: bool,
 }
 
@@ -11,10 +8,7 @@ impl Cli {
     pub fn parse() -> Self {
         match parse_args(&std::env::args().skip(1).collect::<Vec<_>>()) {
             Ok(cli) => cli,
-            Err(msg) => {
-                println!("{}", msg);
-                std::process::exit(0);
-            }
+            Err(msg) => { println!("{}", msg); std::process::exit(0); }
         }
     }
 }
@@ -22,8 +16,6 @@ impl Cli {
 pub const HELP_MESSAGE: &str = "SleepTool compatible app in Rust\n\nOptions:\n  -H, --hibernate      Use hibernate mode instead of sleep\n  -O, --legacy-input  Use legacy input detection method\n  -h, --help           Print help";
 pub const VERSION_MESSAGE: &str = "sleeptool-rs 0.1.0";
 
-/// コマンドライン引数を解析する。`-h` / `--help` / `-V` / `--version` は
-/// 表示メッセージを `Err` で返す（呼び出し側で `println!` して exit する）。
 pub fn parse_args(args: &[String]) -> Result<Cli, String> {
     let mut hibernate = false;
     let mut legacy_input = false;
@@ -36,8 +28,5 @@ pub fn parse_args(args: &[String]) -> Result<Cli, String> {
             _ => {}
         }
     }
-    Ok(Cli {
-        hibernate,
-        legacy_input,
-    })
+    Ok(Cli { hibernate, legacy_input })
 }

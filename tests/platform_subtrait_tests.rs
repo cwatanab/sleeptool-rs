@@ -3,7 +3,6 @@
 
 mod common;
 
-use common::MockHandle;
 use sleeptool_rs::error::Result;
 use sleeptool_rs::platform::{
     AudioProbe, InputProbe, Notifier, PerformanceProbe, PerformanceSnapshot, Platform,

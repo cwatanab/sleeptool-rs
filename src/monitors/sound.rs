@@ -12,10 +12,6 @@ impl SoundMonitor {
 }
 
 impl Monitor for SoundMonitor {
-    fn name(&self) -> &'static str {
-        "sound"
-    }
-
     fn default_factor(&self) -> InhibitFactor {
         InhibitFactor::Sound
     }

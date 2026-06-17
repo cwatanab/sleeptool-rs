@@ -8,7 +8,7 @@ use windows::Win32::System::Performance::{
 
 use crate::error::Result;
 
-use super::util::{check_pdh, to_pcwstr};
+use super::util::check_pdh;
 
 /// PDH クエリハンドルを生成し、最初のデータ収集まで済ませて返す。
 ///
@@ -31,17 +31,6 @@ pub unsafe fn add_counter(query: isize, path: &str) -> Result<isize> {
     let mut counter = 0isize;
     check_pdh(PdhAddCounterW(query, PCWSTR(wpath.as_ptr()), 0, &mut counter))?;
     Ok(counter)
-}
-
-/// クエリからカウンタ値を `f64` で取得する。
-///
-/// # Safety
-///
-/// `counter` は有効な PDH カウンタハンドル。
-pub unsafe fn collect_and_get(counter: isize) -> Result<f64> {
-    let mut value = PDH_FMT_COUNTERVALUE::default();
-    check_pdh(PdhGetFormattedCounterValue(counter, PDH_FMT_DOUBLE, None, &mut value))?;
-    Ok(value.Anonymous.doubleValue)
 }
 
 /// カウンタ値を `f64` で取得する（既に collect 済み前提）。
@@ -103,7 +92,4 @@ pub fn smooth(prev: f64, raw: f64) -> f64 {
     ALPHA * raw + (1.0 - ALPHA) * prev
 }
 
-#[allow(dead_code)]
-pub fn pwstr_from(s: &str) -> PCWSTR {
-    to_pcwstr(&s.encode_utf16().chain(Some(0)).collect::<Vec<u16>>())
-}
+

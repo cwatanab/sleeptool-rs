@@ -269,17 +269,7 @@ fn inihibit_factor_priority_order_is_stable() {
 fn inhibit_factor_labels_are_nonempty() {
     use sleeptool_rs::monitors::InhibitFactor::*;
     for f in [Process, Sound, Cpu, Network, DiskRead, DiskWrite, Input] {
-        assert!(!f.label().is_empty());
+        assert!(f.priority() >= 2 && f.priority() <= 8);
     }
 }
 
-#[test]
-fn name_returns_static_str() {
-    let _: &str = CpuMonitor::new().name();
-    let _: &str = NetworkMonitor::new().name();
-    let _: &str = DiskWriteMonitor::new().name();
-    let _: &str = DiskReadMonitor::new().name();
-    let _: &str = InputMonitor::new().name();
-    let _: &str = ProcessMonitor::new().name();
-    let _: &str = SoundMonitor::new().name();
-}

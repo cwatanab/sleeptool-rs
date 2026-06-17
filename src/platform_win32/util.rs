@@ -3,7 +3,6 @@
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
 
-use windows::core::PCWSTR;
 use windows::Win32::Foundation::{BOOL, BOOLEAN};
 
 use crate::error::{Result, SleepToolError};
@@ -48,7 +47,4 @@ pub fn to_wstring(s: &str) -> Vec<u16> {
     OsStr::new(s).encode_wide().chain(Some(0)).collect()
 }
 
-/// `PCWSTR` への変換（ライフタイム引数を要求しない便利関数）。
-pub fn to_pcwstr(s: &[u16]) -> PCWSTR {
-    PCWSTR(s.as_ptr())
-}
+

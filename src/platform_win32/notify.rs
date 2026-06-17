@@ -1,8 +1,4 @@
 //! 通知（トレイアイコンのバルーンでスリープ警告を表示）。
-//!
-//! 警告バルーンを表示しつつ、`seconds` 秒間のあいだ `InputProbe` で
-//! 入力をチェックし、入力があったら `Ok(true)` を返す（キャンセル）。
-//! 入力がなかった場合は `Ok(false)` を返す（続行）。
 
 use std::sync::atomic::Ordering;
 
@@ -19,8 +15,6 @@ use super::WindowsPlatform;
 const TITLE: &str = "SleepTool";
 const BODY: &str = "まもなくスリープに移行します";
 
-/// 警告バルーンを出して、`seconds` 秒間入力を待つ。
-/// 入力があれば `Ok(true)`（キャンセル）、なければ `Ok(false)`。
 pub fn show_sleep_warning(platform: &WindowsPlatform, seconds: u64) -> Result<bool> {
     show_balloon(platform);
     wait_for_input(platform, seconds)
@@ -28,9 +22,7 @@ pub fn show_sleep_warning(platform: &WindowsPlatform, seconds: u64) -> Result<bo
 
 fn show_balloon(platform: &WindowsPlatform) {
     let hwnd_val = platform.tray_hwnd.load(Ordering::Relaxed);
-    if hwnd_val == 0 {
-        return;
-    }
+    if hwnd_val == 0 { return; }
     unsafe {
         let hwnd = HWND(hwnd_val as *mut std::ffi::c_void);
         let mut nid = NOTIFYICONDATAW {
@@ -61,11 +53,8 @@ fn wait_for_input(platform: &WindowsPlatform, seconds: u64) -> Result<bool> {
 
     for _ in 0..total_ticks {
         let current_idle = InputProbe::last_input_idle_seconds(platform, false).unwrap_or(0);
-        if current_idle < start_idle || current_idle == 0 {
-            return Ok(true);
-        }
+        if current_idle < start_idle || current_idle == 0 { return Ok(true); }
         std::thread::sleep(check_interval);
     }
-
     Ok(false)
 }

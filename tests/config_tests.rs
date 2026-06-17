@@ -47,17 +47,15 @@ fn empty_process_lists_normalized_to_empty() {
 
 #[test]
 fn partial_toml_missing_cpu_section_uses_threshold_struct_default() {
-    // 現状の挙動: TOML に [cpu] セクションが**無い**場合、
-    // 構造体 `ThresholdConfig::default()` (threshold=1.0) が使われる。
-    // これは `Config::default()` (threshold=5.0) と齟齬しているため、
-    // Phase 2 で CPU/Network 設定分離時にこの不整合を解消する。
+    // TOML に [cpu] セクションが**無い**場合、
+    // 構造体 `ThresholdConfig::default()` (threshold=5.0) が使われる。
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.toml");
     std::fs::write(&path, "[sleep]\ndelay_seconds = 900\n").unwrap();
     let loaded = Config::load(&path).unwrap();
     assert_eq!(loaded.sleep.delay_seconds, 900);
     assert!(loaded.sound.enabled);
-    assert_eq!(loaded.cpu.threshold, 1.0);
+    assert_eq!(loaded.cpu.threshold, 5.0);
 }
 
 #[test]

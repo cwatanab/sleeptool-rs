@@ -11,25 +11,17 @@ use super::util::check_boolean;
 
 pub fn suspend(sleep_type: SleepType, force: bool) -> Result<()> {
     unsafe {
-        let hibernate = sleep_type == SleepType::Hibernate;
-        let result = SetSuspendState(
-            BOOLEAN(if hibernate { 1 } else { 0 }),
-            BOOLEAN(if force { 1 } else { 0 }),
+        check_boolean(SetSuspendState(
+            BOOLEAN((sleep_type == SleepType::Hibernate) as u8),
+            BOOLEAN(force as u8),
             BOOLEAN(0),
-        );
-        check_boolean(result)?;
-        Ok(())
+        ))
     }
 }
 
 pub fn turn_display_off() -> Result<()> {
     unsafe {
-        SendMessageW(
-            HWND(std::ptr::null_mut()),
-            WM_SYSCOMMAND,
-            WPARAM(SC_MONITORPOWER as usize),
-            LPARAM(2),
-        );
+        SendMessageW(HWND(std::ptr::null_mut()), WM_SYSCOMMAND, WPARAM(SC_MONITORPOWER as usize), LPARAM(2));
         Ok(())
     }
 }

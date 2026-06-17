@@ -10,29 +10,20 @@ pub mod process;
 pub mod sound;
 pub mod threshold;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 pub enum InhibitFactor {
-    Process,
-    Sound,
-    Cpu,
-    Network,
-    DiskRead,
-    DiskWrite,
-    Input,
+    Process = 2,
+    Sound = 3,
+    Cpu = 4,
+    Network = 5,
+    DiskRead = 6,
+    DiskWrite = 7,
+    Input = 8,
 }
 
 impl InhibitFactor {
-    pub fn priority(self) -> u8 {
-        match self {
-            InhibitFactor::Process => 2,
-            InhibitFactor::Sound => 3,
-            InhibitFactor::Cpu => 4,
-            InhibitFactor::Network => 5,
-            InhibitFactor::DiskRead => 6,
-            InhibitFactor::DiskWrite => 7,
-            InhibitFactor::Input => 8,
-        }
-    }
+    pub fn priority(self) -> u8 { self as u8 }
 
     pub fn label(self) -> &'static str {
         match self {
@@ -56,14 +47,7 @@ pub struct MonitorState {
 }
 
 pub trait Monitor: Send {
-    fn name(&self) -> &'static str;
-
     fn default_factor(&self) -> InhibitFactor;
-
-    fn priority(&self) -> u8 {
-        self.default_factor().priority()
-    }
-
     fn is_enabled(&self, config: &Config) -> bool;
     fn sample(&mut self, config: &Config, platform: &dyn Platform, perf: &PerformanceSnapshot) -> Result<MonitorState>;
 }

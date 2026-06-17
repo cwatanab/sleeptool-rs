@@ -1,4 +1,4 @@
-use sleeptool_rs::cli::{parse_args, Cli};
+use sleeptool_rs::cli::parse_args;
 
 #[test]
 fn parse_args_empty_yields_default() {

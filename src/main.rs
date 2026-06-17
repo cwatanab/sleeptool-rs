@@ -1,5 +1,4 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-#![allow(clippy::clone_on_copy)]
 
 use sleeptool_rs::cli::Cli;
 use sleeptool_rs::config::{Config, LogLevel};
@@ -54,12 +53,8 @@ fn main() -> anyhow::Result<()> {
         default
     };
 
-    if cli.hibernate {
-        config.sleep.hibernate = true;
-    }
-    if cli.legacy_input {
-        config.general.legacy_input = true;
-    }
+    if cli.hibernate { config.sleep.hibernate = true; }
+    if cli.legacy_input { config.general.legacy_input = true; }
 
     if config.general.log_level != LogLevel::Off {
         logging::init_logging(&Config::config_dir().join("logs"))?;
@@ -69,7 +64,6 @@ fn main() -> anyhow::Result<()> {
     tracing::info!("SleepTool Rust starting...");
 
     let platform = Arc::new(WindowsPlatform::new()?);
-
     let state: SharedState = Arc::new(Mutex::new(AppState::new(config.clone(), config_path)));
     let running = Arc::new(AtomicBool::new(true));
 
@@ -104,9 +98,9 @@ fn run_monitor(
     state: SharedState,
     running: Arc<AtomicBool>,
     platform: Arc<WindowsPlatform>,
-    config: Config,
+    _config: Config,
 ) -> anyhow::Result<()> {
-    let mut engine = Engine::new(&config);
+    let mut engine = Engine::new();
     let mut prev_factor: Option<InhibitFactor> = None;
     let mut was_paused = false;
 
@@ -114,21 +108,21 @@ fn run_monitor(
         std::thread::sleep(Duration::from_secs(1));
 
         let (current_config, is_paused) = {
-            let state = state.lock().unwrap();
-            (state.config.clone(), state.paused)
+            let s = state.lock().unwrap();
+            (s.config.clone(), s.paused)
         };
 
         engine.set_paused(is_paused);
 
         let decision = engine.evaluate(&current_config, platform.as_ref())?;
         let hwnd_val = {
-            let mut state = state.lock().unwrap();
-            state.current_decision = decision.clone();
-            state.current_factor = match &decision {
+            let mut s = state.lock().unwrap();
+            s.current_decision = decision.clone();
+            s.current_factor = match &decision {
                 EngineDecision::Inhibit(ms) => Some(ms.factor),
                 _ => None,
             };
-            state.hwnd
+            s.hwnd
         };
 
         if let Some(hwnd) = hwnd_val {
@@ -154,7 +148,7 @@ fn run_monitor(
             EngineDecision::Inhibit(ms) => {
                 if prev_factor != Some(ms.factor) {
                     if ms.factor == InhibitFactor::Input {
-                        tracing::debug!("Sleep inhibited by {}", ms.factor.label());
+                        tracing::debug!("Sleep inhibited by Input");
                     } else {
                         tracing::debug!(
                             "Sleep inhibited by {} ({:.1} / {:.1})",
@@ -168,9 +162,7 @@ fn run_monitor(
                 was_paused = false;
             }
             EngineDecision::Paused => {
-                if !was_paused {
-                    tracing::debug!("Monitoring paused");
-                }
+                if !was_paused { tracing::debug!("Monitoring paused"); }
                 was_paused = true;
                 prev_factor = None;
             }
@@ -180,6 +172,5 @@ fn run_monitor(
             }
         }
     }
-
     Ok(())
 }

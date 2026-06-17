@@ -12,10 +12,6 @@ impl InputMonitor {
 }
 
 impl Monitor for InputMonitor {
-    fn name(&self) -> &'static str {
-        "input"
-    }
-
     fn default_factor(&self) -> InhibitFactor {
         InhibitFactor::Input
     }
