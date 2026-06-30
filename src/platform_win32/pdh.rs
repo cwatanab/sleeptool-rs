@@ -86,10 +86,9 @@ pub unsafe fn try_get(counter: Option<isize>) -> f64 {
 
 /// カウンタから平滑化済みスナップショットを計算する。
 ///
-/// 指数移動平均 (EMA) で滑らかにする。`ALPHA` が平滑化の強さ。
-pub fn smooth(prev: f64, raw: f64) -> f64 {
-    const ALPHA: f64 = 0.1;
-    ALPHA * raw + (1.0 - ALPHA) * prev
+/// 指数移動平均 (EMA) で滑らかにする。`alpha` が平滑化の強さ。
+pub fn smooth(prev: f64, raw: f64, alpha: f64) -> f64 {
+    alpha * raw + (1.0 - alpha) * prev
 }
 
 

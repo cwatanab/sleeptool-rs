@@ -73,7 +73,6 @@ pub unsafe fn create_hicon(rgba: &[u8], width: i32, height: i32) -> windows::cor
     let mut mask_bits: Vec<u8> = Vec::with_capacity(mask_len);
     mask_bits.resize(mask_len, 0);
     let hmask = CreateBitmap(width, height, 1, 1, Some(mask_bits.as_ptr() as *const _));
-    std::mem::forget(mask_bits);
     let mut icon_info = ICONINFO { fIcon: true.into(), xHotspot: 0, yHotspot: 0, hbmMask: hmask, hbmColor: hcolor };
     let hicon = CreateIconIndirect(&mut icon_info)?;
     let _ = DeleteObject(hcolor); let _ = DeleteObject(hmask);

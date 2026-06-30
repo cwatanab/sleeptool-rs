@@ -50,10 +50,11 @@ pub struct WindowsPlatform {
     perf_cache: Mutex<PerfCache>,
     process_cache: Mutex<ProcessCache>,
     pub tray_hwnd: AtomicIsize,
+    smoothing_alpha: f64,
 }
 
 impl WindowsPlatform {
-    pub fn new() -> Result<Self> {
+    pub fn new(smoothing_alpha: f64) -> Result<Self> {
         unsafe {
             let query = pdh::open_query()?;
             let counters = pdh::add_standard_counters(query)?;
@@ -78,6 +79,7 @@ impl WindowsPlatform {
                 }),
                 process_cache: Mutex::new(ProcessCache { last_update: None, names: HashSet::with_capacity(64) }),
                 tray_hwnd: AtomicIsize::new(0),
+                smoothing_alpha,
             })
         }
     }
@@ -114,10 +116,10 @@ impl PerformanceProbe for WindowsPlatform {
             };
 
             let snapshot = PerformanceSnapshot {
-                cpu_percent: pdh::smooth(cache.smoothed.cpu_percent, raw.cpu_percent),
-                network_bytes_per_sec: pdh::smooth(cache.smoothed.network_bytes_per_sec, raw.network_bytes_per_sec),
-                disk_read_bytes_per_sec: pdh::smooth(cache.smoothed.disk_read_bytes_per_sec, raw.disk_read_bytes_per_sec),
-                disk_write_bytes_per_sec: pdh::smooth(cache.smoothed.disk_write_bytes_per_sec, raw.disk_write_bytes_per_sec),
+                cpu_percent: pdh::smooth(cache.smoothed.cpu_percent, raw.cpu_percent, self.smoothing_alpha),
+                network_bytes_per_sec: pdh::smooth(cache.smoothed.network_bytes_per_sec, raw.network_bytes_per_sec, self.smoothing_alpha),
+                disk_read_bytes_per_sec: pdh::smooth(cache.smoothed.disk_read_bytes_per_sec, raw.disk_read_bytes_per_sec, self.smoothing_alpha),
+                disk_write_bytes_per_sec: pdh::smooth(cache.smoothed.disk_write_bytes_per_sec, raw.disk_write_bytes_per_sec, self.smoothing_alpha),
             };
             cache.smoothed = snapshot;
             cache.last_collect = Some(Instant::now());
@@ -219,4 +221,11 @@ impl Notifier for WindowsPlatform {
 impl StartupControl for WindowsPlatform {
     fn set_auto_start(&self, enable: bool) -> Result<()> { registry::set_auto_start(enable) }
     fn is_auto_start_enabled(&self) -> Result<bool> { registry::is_auto_start_enabled() }
+}
+
+pub fn optimize_memory() {
+    unsafe {
+        let handle = windows::Win32::System::Threading::GetCurrentProcess();
+        let _ = windows::Win32::System::ProcessStatus::EmptyWorkingSet(handle);
+    }
 }

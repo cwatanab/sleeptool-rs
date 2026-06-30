@@ -106,6 +106,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
                 };
                 icon::set_tooltip(&mut nid, &tooltip);
                 let _ = Shell_NotifyIconW(NIM_MODIFY, &nid);
+                crate::platform_win32::optimize_memory();
             }
             return LRESULT(0);
         }
@@ -171,6 +172,9 @@ unsafe fn handle_menu_choice(hwnd: HWND, ctx: &mut TrayContext, choice: menu::Me
         menu::MenuChoice::SetDiskWrite(v) => update_config(&ctx.state, |c| {
             if let Some(t) = v { c.disk.write_enabled = true; c.disk.write_threshold = t; } else { c.disk.write_enabled = false; }
         }),
+        menu::MenuChoice::SetSleepDelay(v) => update_config(&ctx.state, |c| {
+            c.sleep.delay_seconds = v;
+        }),
         menu::MenuChoice::Toggle(t) => update_config(&ctx.state, |c| match t {
             menu::Toggle::Hibernate => c.sleep.hibernate = !c.sleep.hibernate,
             menu::Toggle::WarnBeforeSleep => c.sleep.warn_before_sleep = !c.sleep.warn_before_sleep,
@@ -198,7 +202,7 @@ fn tooltip_text(factor: Option<InhibitFactor>, paused: bool, platform: &Arc<Wind
             use std::fmt::Write;
             let mut out = String::with_capacity(status.len() + 64);
             out.push_str(status);
-            let _ = write!(out, "\n⚡CPU:{:.0}%  🌐Network:{:.1}KB/s  💾Disk:{:.1}KB/s",
+            let _ = write!(out, "\n⚡ {:.0}%  🌐 {:.1}KB/s  💾 {:.1}KB/s",
                 s.cpu_percent, s.network_bytes_per_sec / 1000.0, s.disk_write_bytes_per_sec / 1000.0);
             out
         }
@@ -255,6 +259,7 @@ pub fn run_tray(state: SharedState, running: Arc<AtomicBool>, platform: Arc<Wind
             let mut s = state.lock().unwrap();
             s.hwnd = Some(hwnd.0 as isize);
         }
+        crate::platform_win32::optimize_memory();
 
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {

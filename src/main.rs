@@ -63,7 +63,7 @@ fn main() -> anyhow::Result<()> {
 
     tracing::info!("SleepTool Rust starting...");
 
-    let platform = Arc::new(WindowsPlatform::new()?);
+    let platform = Arc::new(WindowsPlatform::new(config.general.smoothing_alpha)?);
     let state: SharedState = Arc::new(Mutex::new(AppState::new(config.clone(), config_path)));
     let running = Arc::new(AtomicBool::new(true));
 
@@ -104,13 +104,15 @@ fn run_monitor(
     let mut prev_factor: Option<InhibitFactor> = None;
     let mut was_paused = false;
 
-    while running.load(Ordering::Relaxed) {
-        std::thread::sleep(Duration::from_secs(1));
+    sleeptool_rs::platform_win32::optimize_memory();
 
+    while running.load(Ordering::Relaxed) {
         let (current_config, is_paused) = {
             let s = state.lock().unwrap();
             (s.config.clone(), s.paused)
         };
+
+        std::thread::sleep(Duration::from_secs(current_config.general.monitoring_interval_seconds));
 
         engine.set_paused(is_paused);
 
@@ -171,6 +173,7 @@ fn run_monitor(
                 was_paused = false;
             }
         }
+        sleeptool_rs::platform_win32::optimize_memory();
     }
     Ok(())
 }

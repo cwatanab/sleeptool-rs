@@ -54,7 +54,7 @@ fn default_resume_cooldown_seconds() -> u64 { 60 }
 
 impl Default for SleepConfig {
     fn default() -> Self {
-        Self { delay_seconds: 600, hibernate: false, warn_before_sleep: true, warn_sound_enabled: true, resume_cooldown_seconds: 60 }
+        Self {             delay_seconds: 600, hibernate: false, warn_before_sleep: true, warn_sound_enabled: true, resume_cooldown_seconds: 60 }
     }
 }
 
@@ -89,7 +89,7 @@ pub struct DiskConfig {
 
 impl Default for DiskConfig {
     fn default() -> Self {
-        Self { write_enabled: yes(), write_threshold: 300000.0, write_delay_seconds: 10, read_enabled: false, read_threshold: 300000.0, read_delay_seconds: 10 }
+        Self { write_enabled: yes(), write_threshold: 500000.0, write_delay_seconds: 10, read_enabled: false, read_threshold: 500000.0, read_delay_seconds: 10 }
     }
 }
 
@@ -105,13 +105,19 @@ pub struct GeneralConfig {
     pub display_state_by_icon: bool,
     #[serde(default = "default_log_level")]
     pub log_level: LogLevel,
+    #[serde(default = "default_monitoring_interval_seconds")]
+    pub monitoring_interval_seconds: u64,
+    #[serde(default = "default_smoothing_alpha")]
+    pub smoothing_alpha: f64,
 }
 
 fn default_log_level() -> LogLevel { LogLevel::Off }
+fn default_monitoring_interval_seconds() -> u64 { 5 }
+fn default_smoothing_alpha() -> f64 { 0.7 }
 
 impl Default for GeneralConfig {
     fn default() -> Self {
-        Self { legacy_input: false, auto_start: false, display_off_on_sleep: true, display_state_by_icon: true, log_level: LogLevel::Off }
+        Self { legacy_input: false, auto_start: false, display_off_on_sleep: true, display_state_by_icon: true, log_level: LogLevel::Off, monitoring_interval_seconds: 5, smoothing_alpha: 0.7 }
     }
 }
 

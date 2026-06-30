@@ -36,6 +36,7 @@ pub enum MenuChoice {
     SetCpu(Option<f64>),
     SetNetwork(Option<f64>),
     SetDiskWrite(Option<f64>),
+    SetSleepDelay(u64),
     Toggle(Toggle),
 }
 
@@ -56,37 +57,58 @@ struct Preset {
 const CPU_PRESETS: &[Preset] = &[
     Preset { id: 2101, label: "無効", value: None },
     Preset { id: 2102, label: "1%", value: Some(1.0) },
-    Preset { id: 2103, label: "5%", value: Some(5.0) },
-    Preset { id: 2104, label: "10%", value: Some(10.0) },
-    Preset { id: 2105, label: "15%", value: Some(15.0) },
-    Preset { id: 2106, label: "25%", value: Some(25.0) },
-    Preset { id: 2107, label: "40%", value: Some(40.0) },
-    Preset { id: 2108, label: "60%", value: Some(60.0) },
-    Preset { id: 2109, label: "80%", value: Some(80.0) },
+    Preset { id: 2103, label: "3%", value: Some(3.0) },
+    Preset { id: 2104, label: "5%", value: Some(5.0) },
+    Preset { id: 2105, label: "8%", value: Some(8.0) },
+    Preset { id: 2106, label: "10%", value: Some(10.0) },
+    Preset { id: 2107, label: "15%", value: Some(15.0) },
+    Preset { id: 2108, label: "25%", value: Some(25.0) },
+    Preset { id: 2109, label: "50%", value: Some(50.0) },
+    Preset { id: 2110, label: "80%", value: Some(80.0) },
 ];
 
 const NETWORK_PRESETS: &[Preset] = &[
     Preset { id: 2201, label: "無効", value: None },
     Preset { id: 2202, label: "1 KB/s", value: Some(1_000.0) },
-    Preset { id: 2203, label: "10 KB/s", value: Some(10_000.0) },
-    Preset { id: 2204, label: "50 KB/s", value: Some(50_000.0) },
-    Preset { id: 2205, label: "100 KB/s", value: Some(100_000.0) },
-    Preset { id: 2206, label: "500 KB/s", value: Some(500_000.0) },
-    Preset { id: 2207, label: "1 MB/s", value: Some(1_000_000.0) },
-    Preset { id: 2208, label: "5 MB/s", value: Some(5_000_000.0) },
-    Preset { id: 2209, label: "10 MB/s", value: Some(10_000_000.0) },
+    Preset { id: 2203, label: "5 KB/s", value: Some(5_000.0) },
+    Preset { id: 2204, label: "10 KB/s", value: Some(10_000.0) },
+    Preset { id: 2205, label: "25 KB/s", value: Some(25_000.0) },
+    Preset { id: 2206, label: "50 KB/s", value: Some(50_000.0) },
+    Preset { id: 2207, label: "100 KB/s", value: Some(100_000.0) },
+    Preset { id: 2208, label: "250 KB/s", value: Some(250_000.0) },
+    Preset { id: 2209, label: "500 KB/s", value: Some(500_000.0) },
+    Preset { id: 2210, label: "1 MB/s", value: Some(1_000_000.0) },
+    Preset { id: 2211, label: "5 MB/s", value: Some(5_000_000.0) },
+    Preset { id: 2212, label: "10 MB/s", value: Some(10_000_000.0) },
+    Preset { id: 2213, label: "50 MB/s", value: Some(50_000_000.0) },
+];
+
+const SLEEP_DELAY_PRESETS: &[Preset] = &[
+    Preset { id: 2501, label: "1分", value: Some(60.0) },
+    Preset { id: 2502, label: "2分", value: Some(120.0) },
+    Preset { id: 2503, label: "5分", value: Some(300.0) },
+    Preset { id: 2504, label: "10分", value: Some(600.0) },
+    Preset { id: 2505, label: "15分", value: Some(900.0) },
+    Preset { id: 2506, label: "20分", value: Some(1200.0) },
+    Preset { id: 2507, label: "30分", value: Some(1800.0) },
+    Preset { id: 2508, label: "45分", value: Some(2700.0) },
+    Preset { id: 2509, label: "60分", value: Some(3600.0) },
+    Preset { id: 2510, label: "120分", value: Some(7200.0) },
 ];
 
 const DISK_WRITE_PRESETS: &[Preset] = &[
     Preset { id: 2301, label: "無効", value: None },
     Preset { id: 2302, label: "10 KB/s", value: Some(10_000.0) },
-    Preset { id: 2303, label: "100 KB/s", value: Some(100_000.0) },
-    Preset { id: 2304, label: "500 KB/s", value: Some(500_000.0) },
-    Preset { id: 2305, label: "1 MB/s", value: Some(1_000_000.0) },
-    Preset { id: 2306, label: "5 MB/s", value: Some(5_000_000.0) },
-    Preset { id: 2307, label: "10 MB/s", value: Some(10_000_000.0) },
-    Preset { id: 2308, label: "50 MB/s", value: Some(50_000_000.0) },
-    Preset { id: 2309, label: "100 MB/s", value: Some(100_000_000.0) },
+    Preset { id: 2303, label: "50 KB/s", value: Some(50_000.0) },
+    Preset { id: 2304, label: "100 KB/s", value: Some(100_000.0) },
+    Preset { id: 2305, label: "250 KB/s", value: Some(250_000.0) },
+    Preset { id: 2306, label: "500 KB/s", value: Some(500_000.0) },
+    Preset { id: 2307, label: "1 MB/s", value: Some(1_000_000.0) },
+    Preset { id: 2308, label: "5 MB/s", value: Some(5_000_000.0) },
+    Preset { id: 2309, label: "10 MB/s", value: Some(10_000_000.0) },
+    Preset { id: 2310, label: "50 MB/s", value: Some(50_000_000.0) },
+    Preset { id: 2311, label: "100 MB/s", value: Some(100_000_000.0) },
+    Preset { id: 2312, label: "500 MB/s", value: Some(500_000_000.0) },
 ];
 
 fn matches_preset(enabled: bool, threshold: f64, presets: &[Preset]) -> usize {
@@ -147,6 +169,9 @@ pub unsafe fn show(hwnd: HWND, state: &SharedState) -> MenuChoice {
     let disk_checked = matches_preset(config.disk.write_enabled, config.disk.write_threshold, DISK_WRITE_PRESETS);
     build_submenu(hmenu, "ディスク書込", DISK_WRITE_PRESETS, disk_checked);
 
+    let sleep_checked = matches_preset(true, config.sleep.delay_seconds as f64, SLEEP_DELAY_PRESETS);
+    build_submenu(hmenu, "スリープ待機時間", SLEEP_DELAY_PRESETS, sleep_checked);
+
     append_separator(hmenu);
     let opt_sub = CreatePopupMenu().unwrap();
     let checked = opts_checked(&config);
@@ -174,6 +199,7 @@ pub unsafe fn show(hwnd: HWND, state: &SharedState) -> MenuChoice {
     for p in CPU_PRESETS { if p.id == cmd_id { return MenuChoice::SetCpu(p.value); } }
     for p in NETWORK_PRESETS { if p.id == cmd_id { return MenuChoice::SetNetwork(p.value); } }
     for p in DISK_WRITE_PRESETS { if p.id == cmd_id { return MenuChoice::SetDiskWrite(p.value); } }
+    for p in SLEEP_DELAY_PRESETS { if p.id == cmd_id { return MenuChoice::SetSleepDelay(p.value.unwrap() as u64); } }
 
     for &(id, _, ref toggle) in OPT_ITEMS {
         if id == cmd_id { return MenuChoice::Toggle(*toggle); }
