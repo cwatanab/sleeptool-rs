@@ -56,7 +56,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
                 hIcon: ctx.icons.pick(None, false),
                 ..Default::default()
             };
-            icon::set_tooltip(&mut nid, "SleepTool Rust");
+            icon::set_tooltip(&mut nid, concat!("SleepTool Rust v", env!("CARGO_PKG_VERSION")));
             let _ = Shell_NotifyIconW(NIM_ADD, &nid);
             return LRESULT(0);
         }
@@ -184,29 +184,27 @@ unsafe fn handle_menu_choice(hwnd: HWND, ctx: &mut TrayContext, choice: menu::Me
 }
 
 fn tooltip_text(factor: Option<InhibitFactor>, paused: bool, platform: &Arc<WindowsPlatform>) -> String {
-    let status = match (paused, factor) {
-        (true, _) => "SleepTool Rust (一時停止中)",
-        (_, Some(InhibitFactor::Process)) => "SleepTool Rust - プロセス実行中",
-        (_, Some(InhibitFactor::Sound)) => "SleepTool Rust - サウンド出力中",
-        (_, Some(InhibitFactor::Cpu)) => "SleepTool Rust - CPU使用中",
-        (_, Some(InhibitFactor::Network)) => "SleepTool Rust - ネットワーク使用中",
-        (_, Some(InhibitFactor::DiskRead)) => "SleepTool Rust - ディスク読み込み中",
-        (_, Some(InhibitFactor::DiskWrite)) => "SleepTool Rust - ディスク書き込み中",
-        (_, Some(InhibitFactor::Input)) => "SleepTool Rust - 入力検知中",
-        (_, None) => "SleepTool Rust",
+    let factor_str = match (paused, factor) {
+        (true, _) => " (一時停止中)",
+        (_, Some(InhibitFactor::Process)) => " - プロセス実行中",
+        (_, Some(InhibitFactor::Sound)) => " - サウンド出力中",
+        (_, Some(InhibitFactor::Cpu)) => " - CPU使用中",
+        (_, Some(InhibitFactor::Network)) => " - ネットワーク使用中",
+        (_, Some(InhibitFactor::DiskRead)) => " - ディスク読み込み中",
+        (_, Some(InhibitFactor::DiskWrite)) => " - ディスク書き込み中",
+        (_, Some(InhibitFactor::Input)) => " - 入力検知中",
+        (_, None) => "",
     };
 
-    match PerformanceProbe::query_performance(platform.as_ref()) {
-        Ok(s) => {
-            use std::fmt::Write;
-            let mut out = String::with_capacity(status.len() + 64);
-            out.push_str(status);
-            let _ = write!(out, "\n⚡ {:.0}%  🌐 {:.1}KB/s  💾 {:.1}KB/s",
-                s.cpu_percent, s.network_bytes_per_sec / 1000.0, s.disk_write_bytes_per_sec / 1000.0);
-            out
-        }
-        Err(_) => status.to_string(),
+    let prefix = concat!("SleepTool Rust v", env!("CARGO_PKG_VERSION"));
+    let mut out = format!("{}{}", prefix, factor_str);
+
+    if let Ok(s) = PerformanceProbe::query_performance(platform.as_ref()) {
+        use std::fmt::Write;
+        let _ = write!(out, "\n⚡ {:.0}%  🌐 {:.1}KB/s  💾 {:.1}KB/s",
+            s.cpu_percent, s.network_bytes_per_sec / 1000.0, s.disk_write_bytes_per_sec / 1000.0);
     }
+    out
 }
 
 pub fn run_tray(state: SharedState, running: Arc<AtomicBool>, platform: Arc<WindowsPlatform>) -> anyhow::Result<()> {
