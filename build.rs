@@ -9,22 +9,46 @@ fn main() {
     let _ = fs::create_dir_all(icons_dir);
     let ico_src = Path::new("assets");
 
+    // アプリケーションアイコン用に Default.png から default.ico を自動生成
+    let default_png = ico_src.join("Default.png");
+    let default_ico = ico_src.join("default.ico");
+    if default_png.exists() {
+        let _ = write_ico_from_png(&default_png, &default_ico);
+    }
+
     embed_resource::compile("resources.rc", embed_resource::NONE);
     let mappings = [
-        ("cpu.ico", "cpu"),
-        ("default.ico", "default"),
-        ("disk.ico", "disk"),
-        ("input.ico", "input"),
-        ("network.ico", "network"),
-        ("pause.ico", "paused"),
-        ("process.ico", "process"),
-        ("sound.ico", "sound"),
+        ("cpu", "cpu", "CPU.png"),
+        ("default", "default", "Default.png"),
+        ("disk", "disk", "Disk.png"),
+        ("input", "input", "Input.png"),
+        ("network", "network", "Network.png"),
+        ("pause", "paused", "Pause.png"),
+        ("process", "process", "Process.png"),
+        ("sound", "sound", "Sound.png"),
     ];
 
     const PREFERRED_SIZES: [u32; 3] = [48, 32, 16];
 
-    for (ico_name, out_name) in &mappings {
-        let ico_path = ico_src.join(ico_name);
+    for (ico_base, out_name, png_name) in &mappings {
+        let png_path = ico_src.join(png_name);
+        let ico_path = ico_src.join(format!("{}.ico", ico_base));
+
+        if png_path.exists() {
+            if let Some((w, h, rgba)) = decode_png_file(&png_path) {
+                let main_w = PREFERRED_SIZES[0];
+                let main_rgba = resize_rgba(&rgba, w, h, main_w, main_w);
+                generate_icon(icons_dir, out_name, &main_rgba);
+
+                for &size in PREFERRED_SIZES.iter().skip(1) {
+                    let resized = resize_rgba(&rgba, w, h, size, size);
+                    let suffix = format!("{}_{}", out_name, size);
+                    generate_icon(icons_dir, &suffix, &resized);
+                }
+                continue;
+            }
+        }
+
         if !ico_path.exists() { continue; }
 
         let all_sizes = extract_all_rgba_from_ico(&ico_path, &PREFERRED_SIZES);
@@ -32,13 +56,11 @@ fn main() {
 
         let (main_w, _, main_rgba) = &all_sizes[0];
         generate_icon(icons_dir, out_name, main_rgba);
-        generate_icon(icons_dir, &format!("{}_dark", out_name), &invert_rgba(main_rgba));
 
         for (w, _, rgba) in all_sizes.iter().skip(1) {
             if *w != *main_w {
                 let suffix = format!("{}_{}", out_name, w);
                 generate_icon(icons_dir, &suffix, rgba);
-                generate_icon(icons_dir, &format!("{}_dark", &suffix), &invert_rgba(rgba));
             }
         }
     }
@@ -134,14 +156,6 @@ fn decode_bmp_rgba(data: &[u8], w: u32, h: u32) -> Option<Vec<u8>> {
     Some(rgba)
 }
 
-fn invert_rgba(rgba: &[u8]) -> Vec<u8> {
-    let mut out = rgba.to_vec();
-    for i in (0..out.len()).step_by(4) {
-        out[i] = 255 - out[i]; out[i + 1] = 255 - out[i + 1]; out[i + 2] = 255 - out[i + 2];
-    }
-    out
-}
-
 fn generate_icon(dir: &Path, name: &str, rgba: &[u8]) {
     fs::write(dir.join(format!("{}.rgba", name)), rgba).expect("Failed to write icon file");
 }
@@ -167,4 +181,87 @@ fn quantize_rgba(rgba: &[u8]) -> Vec<u8> {
         compact.push(0u8); compact.extend_from_slice(rgba);
         compact
     }
+}
+
+fn decode_png_file(path: &Path) -> Option<(u32, u32, Vec<u8>)> {
+    let data = fs::read(path).ok()?;
+    let decoder = png::Decoder::new(std::io::Cursor::new(data));
+    let mut reader = decoder.read_info().ok()?;
+    let w = reader.info().width;
+    let h = reader.info().height;
+    let color_type = reader.info().color_type;
+    let mut buf = vec![0u8; reader.output_buffer_size()];
+    reader.next_frame(&mut buf).ok()?;
+
+    let mut rgba = vec![0u8; (w * h * 4) as usize];
+    match color_type {
+        png::ColorType::Rgba => {
+            rgba.copy_from_slice(&buf[0..(w * h * 4) as usize]);
+        }
+        png::ColorType::Rgb => {
+            for i in 0..(w * h) as usize {
+                rgba[i * 4] = buf[i * 3];
+                rgba[i * 4 + 1] = buf[i * 3 + 1];
+                rgba[i * 4 + 2] = buf[i * 3 + 2];
+                rgba[i * 4 + 3] = 255;
+            }
+        }
+        _ => return None,
+    }
+    Some((w, h, rgba))
+}
+
+fn resize_rgba(rgba: &[u8], src_w: u32, src_h: u32, dst_w: u32, dst_h: u32) -> Vec<u8> {
+    if src_w == dst_w && src_h == dst_h {
+        return rgba.to_vec();
+    }
+    let mut dst = vec![0u8; (dst_w * dst_h * 4) as usize];
+    for y in 0..dst_h {
+        let src_y = (y * src_h / dst_h) as usize;
+        for x in 0..dst_w {
+            let src_x = (x * src_w / dst_w) as usize;
+            let src_idx = (src_y * src_w as usize + src_x) * 4;
+            let dst_idx = (y as usize * dst_w as usize + x as usize) * 4;
+            dst[dst_idx..dst_idx+4].copy_from_slice(&rgba[src_idx..src_idx+4]);
+        }
+    }
+    dst
+}
+
+fn write_ico_from_png(png_path: &Path, ico_path: &Path) -> Option<()> {
+    let png_data = fs::read(png_path).ok()?;
+    let decoder = png::Decoder::new(std::io::Cursor::new(&png_data));
+    let reader = decoder.read_info().ok()?;
+    let w = reader.info().width;
+    let h = reader.info().height;
+
+    let mut ico = Vec::new();
+    // ヘッダー: Reserved(0) u16, Type(1) u16, Count(1) u16
+    ico.extend_from_slice(&0u16.to_le_bytes());
+    ico.extend_from_slice(&1u16.to_le_bytes());
+    ico.extend_from_slice(&1u16.to_le_bytes());
+
+    // ディレクトリエントリ
+    let w_byte = if w >= 256 { 0u8 } else { w as u8 };
+    let h_byte = if h >= 256 { 0u8 } else { h as u8 };
+    ico.push(w_byte);
+    ico.push(h_byte);
+    ico.push(0); // ColorCount
+    ico.push(0); // Reserved
+
+    // Planes(1) u16, BitCount(32) u16
+    ico.extend_from_slice(&1u16.to_le_bytes());
+    ico.extend_from_slice(&32u16.to_le_bytes());
+
+    // BytesInRes (PNGデータサイズ) u32
+    ico.extend_from_slice(&(png_data.len() as u32).to_le_bytes());
+
+    // ImageOffset (ヘッダー6バイト + エントリ16バイト = 22) u32
+    ico.extend_from_slice(&22u32.to_le_bytes());
+
+    // PNGデータ本体
+    ico.extend_from_slice(&png_data);
+
+    fs::write(ico_path, ico).ok()?;
+    Some(())
 }

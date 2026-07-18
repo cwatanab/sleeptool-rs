@@ -76,7 +76,6 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
             return LRESULT(0);
         }
         WM_SETTINGCHANGE => {
-            icon::update_dark_mode();
             let _ = PostMessageW(hwnd, WM_UPDATE_TRAY, WPARAM(0), LPARAM(0));
             return LRESULT(0);
         }

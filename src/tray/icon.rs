@@ -7,9 +7,6 @@
 //! - 1 バイト目 `0`: 非圧縮。残りはそのまま RGBA 列。
 //! - 1 バイト目 `1`: パレット圧縮。2 バイト目がパレット長-1。
 
-use std::sync::atomic::{AtomicBool, Ordering};
-
-use windows::core::PCWSTR;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::Gdi::{
     CreateBitmap, CreateDIBSection, DeleteObject, GetDC, ReleaseDC, BITMAPINFO, BITMAPINFOHEADER,
@@ -21,22 +18,6 @@ use crate::monitors::InhibitFactor;
 
 macro_rules! icon_data {
     ($name:literal) => { include_bytes!(concat!(env!("OUT_DIR"), "/", $name, ".bin")) };
-}
-
-static DARK_MODE: AtomicBool = AtomicBool::new(false);
-
-pub fn is_dark_mode() -> bool { DARK_MODE.load(Ordering::Relaxed) }
-
-pub fn update_dark_mode() {
-    use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
-    let path: Vec<u16> = "Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize\0".encode_utf16().collect();
-    let mut value: u32 = 1;
-    let mut size: u32 = 4;
-    unsafe {
-        let _ = RegGetValueW(HKEY_CURRENT_USER, PCWSTR(path.as_ptr()), windows::core::w!("AppsUseLightTheme"),
-            RRF_RT_REG_DWORD, None, Some(&mut value as *mut _ as *mut _), Some(&mut size));
-    }
-    DARK_MODE.store(value == 0, Ordering::Relaxed);
 }
 
 pub fn decompact(data: &[u8]) -> Vec<u8> {
@@ -89,14 +70,6 @@ pub fn load_handle(name: &str) -> anyhow::Result<HICON> {
         "process" => icon_data!("process"),
         "paused" => icon_data!("paused"),
         "input" => icon_data!("input"),
-        "default_dark" => icon_data!("default_dark"),
-        "cpu_dark" => icon_data!("cpu_dark"),
-        "network_dark" => icon_data!("network_dark"),
-        "disk_dark" => icon_data!("disk_dark"),
-        "sound_dark" => icon_data!("sound_dark"),
-        "process_dark" => icon_data!("process_dark"),
-        "paused_dark" => icon_data!("paused_dark"),
-        "input_dark" => icon_data!("input_dark"),
         _ => icon_data!("default"),
     };
     let rgba = decompact(data);
@@ -112,16 +85,16 @@ pub struct IconSet {
 }
 
 impl IconSet {
-    fn load_suffix(suffix: &str) -> anyhow::Result<Self> {
+    fn load() -> anyhow::Result<Self> {
         Ok(Self {
-            default: load_handle(&format!("default{}", suffix))?,
-            paused: load_handle(&format!("paused{}", suffix))?,
-            input: load_handle(&format!("input{}", suffix))?,
-            cpu: load_handle(&format!("cpu{}", suffix))?,
-            network: load_handle(&format!("network{}", suffix))?,
-            disk: load_handle(&format!("disk{}", suffix))?,
-            sound: load_handle(&format!("sound{}", suffix))?,
-            process: load_handle(&format!("process{}", suffix))?,
+            default: load_handle("default")?,
+            paused: load_handle("paused")?,
+            input: load_handle("input")?,
+            cpu: load_handle("cpu")?,
+            network: load_handle("network")?,
+            disk: load_handle("disk")?,
+            sound: load_handle("sound")?,
+            process: load_handle("process")?,
         })
     }
 
@@ -154,16 +127,15 @@ impl Drop for IconSet {
     }
 }
 
-pub struct ThemeIconSet { light: IconSet, dark: IconSet }
+pub struct ThemeIconSet { icons: IconSet }
 
 impl ThemeIconSet {
     pub fn load() -> anyhow::Result<Self> {
-        update_dark_mode();
-        Ok(Self { light: IconSet::load_suffix("")?, dark: IconSet::load_suffix("_dark")? })
+        Ok(Self { icons: IconSet::load()? })
     }
 
     pub fn pick(&self, factor: Option<InhibitFactor>, paused: bool) -> HICON {
-        if is_dark_mode() { &self.dark } else { &self.light }.pick(factor, paused)
+        self.icons.pick(factor, paused)
     }
 }
 
