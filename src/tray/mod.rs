@@ -3,10 +3,10 @@
 mod icon;
 mod menu;
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 
-use windows::core::PCWSTR;
+use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM, HINSTANCE};
 use windows::Win32::UI::Shell::{
     Shell_NotifyIconW, NOTIFYICONDATAW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY,
@@ -16,6 +16,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     HMENU, PostMessageW, PostQuitMessage, RegisterClassW, SetWindowLongPtrW, TranslateMessage,
     CREATESTRUCTW, GWLP_USERDATA, MSG, WNDCLASSW, WM_CREATE, WM_DESTROY, WM_LBUTTONDBLCLK,
     WM_RBUTTONUP, WM_SETTINGCHANGE, WM_USER, WS_POPUP,
+    RegisterWindowMessageW, ChangeWindowMessageFilter, MSGFLT_ADD,
 };
 
 use crate::monitors::InhibitFactor;
@@ -25,6 +26,8 @@ use crate::state::SharedState;
 
 pub const WM_TRAYICON: u32 = WM_USER + 1;
 pub const WM_UPDATE_TRAY: u32 = WM_USER + 2;
+
+static WM_TASKBAR_CREATED: AtomicU32 = AtomicU32::new(0);
 
 use icon::ThemeIconSet;
 
@@ -36,7 +39,52 @@ struct TrayContext {
     icons: ThemeIconSet,
 }
 
+unsafe fn create_notify_icon_data(hwnd: HWND, ctx: &TrayContext) -> NOTIFYICONDATAW {
+    let (current_factor, paused, display_state_by_icon) = {
+        let s = ctx.state.lock().unwrap();
+        (s.current_factor, s.paused, s.config.general.display_state_by_icon)
+    };
+
+    let target = ctx.icons.pick(current_factor, paused);
+    let hicon = if display_state_by_icon {
+        target
+    } else if paused {
+        ctx.icons.pick(None, true)
+    } else {
+        ctx.icons.pick(None, false)
+    };
+
+    let tooltip = tooltip_text(current_factor, paused, &ctx.platform);
+
+    let mut nid = NOTIFYICONDATAW {
+        cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
+        hWnd: hwnd,
+        uID: 1,
+        uFlags: NIF_ICON | NIF_MESSAGE | NIF_TIP,
+        uCallbackMessage: WM_TRAYICON,
+        hIcon: hicon,
+        ..Default::default()
+    };
+    icon::set_tooltip(&mut nid, &tooltip);
+    nid
+}
+
+unsafe fn register_tray_icon(hwnd: HWND, ctx: &TrayContext) {
+    let nid = create_notify_icon_data(hwnd, ctx);
+    let _ = Shell_NotifyIconW(NIM_ADD, &nid);
+}
+
 unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    let taskbar_created = WM_TASKBAR_CREATED.load(Ordering::Relaxed);
+    if taskbar_created != 0 && msg == taskbar_created {
+        let ctx_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA);
+        if ctx_ptr != 0 {
+            let ctx = &*(ctx_ptr as *mut TrayContext);
+            register_tray_icon(hwnd, ctx);
+        }
+        return LRESULT(0);
+    }
+
     match msg {
         WM_CREATE => {
             let create_struct = &*(lparam.0 as *const CREATESTRUCTW);
@@ -47,17 +95,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
             ctx.hwnd = hwnd;
             ctx.platform.tray_hwnd.store(hwnd.0 as isize, Ordering::Relaxed);
 
-            let mut nid = NOTIFYICONDATAW {
-                cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
-                hWnd: hwnd,
-                uID: 1,
-                uFlags: NIF_ICON | NIF_MESSAGE | NIF_TIP,
-                uCallbackMessage: WM_TRAYICON,
-                hIcon: ctx.icons.pick(None, false),
-                ..Default::default()
-            };
-            icon::set_tooltip(&mut nid, concat!("SleepTool Rust v", env!("CARGO_PKG_VERSION")));
-            let _ = Shell_NotifyIconW(NIM_ADD, &nid);
+            register_tray_icon(hwnd, ctx);
             return LRESULT(0);
         }
         WM_DESTROY => {
@@ -83,27 +121,8 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
             let ctx_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA);
             if ctx_ptr != 0 {
                 let ctx = &mut *(ctx_ptr as *mut TrayContext);
-                let (current_factor, paused, display_state_by_icon) = {
-                    let s = ctx.state.lock().unwrap();
-                    (s.current_factor, s.paused, s.config.general.display_state_by_icon)
-                };
-
-                let target = ctx.icons.pick(current_factor, paused);
-                let hicon = if display_state_by_icon { target }
-                    else if paused { ctx.icons.pick(None, true) }
-                    else { ctx.icons.pick(None, false) };
-
-                let tooltip = tooltip_text(current_factor, paused, &ctx.platform);
-
-                let mut nid = NOTIFYICONDATAW {
-                    cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
-                    hWnd: hwnd,
-                    uID: 1,
-                    uFlags: NIF_ICON | NIF_TIP,
-                    hIcon: hicon,
-                    ..Default::default()
-                };
-                icon::set_tooltip(&mut nid, &tooltip);
+                let mut nid = create_notify_icon_data(hwnd, ctx);
+                nid.uFlags = NIF_ICON | NIF_TIP;
                 let _ = Shell_NotifyIconW(NIM_MODIFY, &nid);
                 crate::platform_win32::optimize_memory();
             }
@@ -209,6 +228,12 @@ fn tooltip_text(factor: Option<InhibitFactor>, paused: bool, platform: &Arc<Wind
 
 pub fn run_tray(state: SharedState, running: Arc<AtomicBool>, platform: Arc<WindowsPlatform>) -> anyhow::Result<()> {
     unsafe {
+        let taskbar_created = RegisterWindowMessageW(w!("TaskbarCreated"));
+        WM_TASKBAR_CREATED.store(taskbar_created, Ordering::Relaxed);
+        if taskbar_created != 0 {
+            let _ = ChangeWindowMessageFilter(taskbar_created, MSGFLT_ADD);
+        }
+
         let class_name: Vec<u16> = "SleepToolTrayWindowClass\0".encode_utf16().collect();
         let hinstance = HINSTANCE(windows::Win32::System::LibraryLoader::GetModuleHandleW(None).unwrap_or_default().0);
 
