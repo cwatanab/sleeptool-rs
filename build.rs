@@ -12,11 +12,21 @@ fn main() {
     // アプリケーションアイコン用に Default.png から default.ico を自動生成
     let default_png = ico_src.join("Default.png");
     let default_ico = ico_src.join("default.ico");
+    let default_res = ico_src.join("default.res");
     if default_png.exists() {
         let _ = write_ico_from_png(&default_png, &default_ico);
     }
+    if default_ico.exists() {
+        let _ = generate_res_from_ico(&default_ico, &default_res);
+    }
 
-    embed_resource::compile("resources.rc", embed_resource::NONE);
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+    let res_abs = Path::new(&manifest_dir).join("assets/default.res");
+    if res_abs.exists() {
+        println!("cargo:rustc-link-arg={}", res_abs.display());
+    } else {
+        embed_resource::compile("resources.rc", embed_resource::NONE);
+    }
     let mappings = [
         ("cpu", "cpu", "CPU.png"),
         ("default", "default", "Default.png"),
@@ -263,5 +273,105 @@ fn write_ico_from_png(png_path: &Path, ico_path: &Path) -> Option<()> {
     ico.extend_from_slice(&png_data);
 
     fs::write(ico_path, ico).ok()?;
+    Some(())
+}
+
+fn generate_res_from_ico(ico_path: &Path, res_path: &Path) -> Option<()> {
+    let ico_bytes = fs::read(ico_path).ok()?;
+    if ico_bytes.len() < 6 { return None; }
+    let count = u16::from_le_bytes([ico_bytes[4], ico_bytes[5]]) as usize;
+    if count == 0 { return None; }
+
+    struct Entry {
+        w: u8, h: u8, color_count: u8, res_val: u8,
+        planes: u16, bit_count: u16, bytes_in_res: u32, img_offset: u32, id: u16,
+    }
+    let mut entries = Vec::new();
+    for i in 0..count {
+        let offset = 6 + i * 16;
+        if offset + 16 > ico_bytes.len() { break; }
+        entries.push(Entry {
+            w: ico_bytes[offset],
+            h: ico_bytes[offset + 1],
+            color_count: ico_bytes[offset + 2],
+            res_val: ico_bytes[offset + 3],
+            planes: u16::from_le_bytes([ico_bytes[offset + 4], ico_bytes[offset + 5]]),
+            bit_count: u16::from_le_bytes([ico_bytes[offset + 6], ico_bytes[offset + 7]]),
+            bytes_in_res: u32::from_le_bytes([ico_bytes[offset + 8], ico_bytes[offset + 9], ico_bytes[offset + 10], ico_bytes[offset + 11]]),
+            img_offset: u32::from_le_bytes([ico_bytes[offset + 12], ico_bytes[offset + 13], ico_bytes[offset + 14], ico_bytes[offset + 15]]),
+            id: (i + 1) as u16,
+        });
+    }
+
+    let mut res = Vec::new();
+    // Null Resource Header (32 bytes)
+    res.extend_from_slice(&0u32.to_le_bytes());
+    res.extend_from_slice(&32u32.to_le_bytes());
+    res.extend_from_slice(&0x0000FFFFu32.to_le_bytes());
+    res.extend_from_slice(&0x0000FFFFu32.to_le_bytes());
+    res.extend_from_slice(&[0u8; 16]);
+
+    fn pad(b: &mut Vec<u8>) {
+        let p = (4 - (b.len() % 4)) % 4;
+        b.extend(std::iter::repeat(0).take(p));
+    }
+
+    // RT_ICON (type 3)
+    for entry in &entries {
+        let start = entry.img_offset as usize;
+        let end = start + entry.bytes_in_res as usize;
+        if end > ico_bytes.len() { continue; }
+        let img_data = &ico_bytes[start..end];
+        let data_size = img_data.len() as u32;
+
+        res.extend_from_slice(&data_size.to_le_bytes());
+        res.extend_from_slice(&32u32.to_le_bytes());
+        res.extend_from_slice(&0xFFFFu16.to_le_bytes());
+        res.extend_from_slice(&3u16.to_le_bytes()); // RT_ICON
+        res.extend_from_slice(&0xFFFFu16.to_le_bytes());
+        res.extend_from_slice(&entry.id.to_le_bytes());
+        res.extend_from_slice(&0u32.to_le_bytes());
+        res.extend_from_slice(&0x1030u16.to_le_bytes());
+        res.extend_from_slice(&0u16.to_le_bytes());
+        res.extend_from_slice(&0u32.to_le_bytes());
+        res.extend_from_slice(&0u32.to_le_bytes());
+
+        res.extend_from_slice(img_data);
+        pad(&mut res);
+    }
+
+    // RT_GROUP_ICON (type 14)
+    let mut grp_data = Vec::new();
+    grp_data.extend_from_slice(&0u16.to_le_bytes());
+    grp_data.extend_from_slice(&1u16.to_le_bytes());
+    grp_data.extend_from_slice(&(count as u16).to_le_bytes());
+    for entry in &entries {
+        grp_data.push(entry.w);
+        grp_data.push(entry.h);
+        grp_data.push(entry.color_count);
+        grp_data.push(entry.res_val);
+        grp_data.extend_from_slice(&entry.planes.to_le_bytes());
+        grp_data.extend_from_slice(&entry.bit_count.to_le_bytes());
+        grp_data.extend_from_slice(&entry.bytes_in_res.to_le_bytes());
+        grp_data.extend_from_slice(&entry.id.to_le_bytes());
+    }
+
+    let data_size = grp_data.len() as u32;
+    res.extend_from_slice(&data_size.to_le_bytes());
+    res.extend_from_slice(&32u32.to_le_bytes());
+    res.extend_from_slice(&0xFFFFu16.to_le_bytes());
+    res.extend_from_slice(&14u16.to_le_bytes()); // RT_GROUP_ICON
+    res.extend_from_slice(&0xFFFFu16.to_le_bytes());
+    res.extend_from_slice(&1u16.to_le_bytes()); // icon_id = 1
+    res.extend_from_slice(&0u32.to_le_bytes());
+    res.extend_from_slice(&0x1030u16.to_le_bytes());
+    res.extend_from_slice(&0u16.to_le_bytes());
+    res.extend_from_slice(&0u32.to_le_bytes());
+    res.extend_from_slice(&0u32.to_le_bytes());
+
+    res.extend_from_slice(&grp_data);
+    pad(&mut res);
+
+    fs::write(res_path, res).ok()?;
     Some(())
 }
