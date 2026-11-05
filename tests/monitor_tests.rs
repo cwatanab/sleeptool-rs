@@ -1,8 +1,8 @@
 mod common;
 
 use common::{loud, MockPlatform};
-use sleeptool_rs::config::Config;
-use sleeptool_rs::monitors::{
+use sleeptool::config::Config;
+use sleeptool::monitors::{
     cpu::CpuMonitor,
     disk::{DiskReadMonitor, DiskWriteMonitor},
     input::InputMonitor,
@@ -11,7 +11,7 @@ use sleeptool_rs::monitors::{
     sound::SoundMonitor,
     InhibitFactor, Monitor,
 };
-use sleeptool_rs::platform::PerformanceSnapshot;
+use sleeptool::platform::PerformanceSnapshot;
 
 fn snap(cpu: f64, net: f64, dw: f64, dr: f64) -> PerformanceSnapshot {
     PerformanceSnapshot {
@@ -255,8 +255,23 @@ fn sound_at_threshold_inhibits() {
 }
 
 #[test]
+fn sound_hold_off_inhibits_after_silence() {
+    let mut m = SoundMonitor::new();
+    let cfg = Config::default();
+    // 音が鳴っている
+    let p_loud = MockPlatform::new().idle(601).sound_rms(0.05).build();
+    let s1 = m.sample(&cfg, &p_loud, &snap(0.0, 0.0, 0.0, 0.0)).unwrap();
+    assert!(s1.inhibit);
+
+    // その直後に無音になっても、ホールドオフ（猶予時間）により inhibit が維持される
+    let p_silent = MockPlatform::new().idle(601).sound_rms(0.0).build();
+    let s2 = m.sample(&cfg, &p_silent, &snap(0.0, 0.0, 0.0, 0.0)).unwrap();
+    assert!(s2.inhibit);
+}
+
+#[test]
 fn inihibit_factor_priority_order_is_stable() {
-    use sleeptool_rs::monitors::InhibitFactor::*;
+    use sleeptool::monitors::InhibitFactor::*;
     assert!(Process.priority() < Sound.priority());
     assert!(Sound.priority() < Cpu.priority());
     assert!(Cpu.priority() < Network.priority());
@@ -267,7 +282,7 @@ fn inihibit_factor_priority_order_is_stable() {
 
 #[test]
 fn inhibit_factor_labels_are_nonempty() {
-    use sleeptool_rs::monitors::InhibitFactor::*;
+    use sleeptool::monitors::InhibitFactor::*;
     for f in [Process, Sound, Cpu, Network, DiskRead, DiskWrite, Input] {
         assert!(f.priority() >= 2 && f.priority() <= 8);
     }

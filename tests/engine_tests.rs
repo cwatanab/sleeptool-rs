@@ -1,9 +1,9 @@
 mod common;
 
 use common::{idle_and_cpu, idle_only, MockPlatform};
-use sleeptool_rs::config::{Config, ThresholdConfig};
-use sleeptool_rs::engine::{Engine, EngineDecision};
-use sleeptool_rs::monitors::InhibitFactor;
+use sleeptool::config::{Config, ThresholdConfig};
+use sleeptool::engine::{Engine, EngineDecision};
+use sleeptool::monitors::InhibitFactor;
 
 fn extract_inhibit(d: EngineDecision) -> Option<InhibitFactor> {
     match d {
@@ -167,7 +167,7 @@ fn paused_continues_even_when_activity_present() {
 
 #[test]
 fn resume_cooldown_returns_cooldown_decision() {
-    use sleeptool_rs::engine::EngineDecision;
+    use sleeptool::engine::EngineDecision;
     let mut config = Config::default();
     config.sleep.resume_cooldown_seconds = 60;
     let platform = idle_only(601);
@@ -179,7 +179,7 @@ fn resume_cooldown_returns_cooldown_decision() {
 
 #[test]
 fn cooldown_carries_remaining_seconds() {
-    use sleeptool_rs::engine::EngineDecision;
+    use sleeptool::engine::EngineDecision;
     let mut config = Config::default();
     config.sleep.resume_cooldown_seconds = 60;
     let platform = idle_only(601);
@@ -197,7 +197,7 @@ fn cooldown_carries_remaining_seconds() {
 fn cooldown_decision_does_not_pretend_to_be_input() {
     // バグ回帰: 旧実装は Cooldown 中に InhibitFactor::Input を返していた。
     // 修正後は Cooldown バリアントが独立して存在する。
-    use sleeptool_rs::engine::EngineDecision;
+    use sleeptool::engine::EngineDecision;
     let mut config = Config::default();
     config.sleep.resume_cooldown_seconds = 60;
     let platform = idle_only(601);

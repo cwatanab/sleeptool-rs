@@ -14,7 +14,7 @@ impl Cli {
 }
 
 pub const HELP_MESSAGE: &str = "SleepTool compatible app in Rust\n\nOptions:\n  -H, --hibernate      Use hibernate mode instead of sleep\n  -O, --legacy-input  Use legacy input detection method\n  -h, --help           Print help";
-pub const VERSION_MESSAGE: &str = "sleeptool-rs 0.1.0";
+pub const VERSION_MESSAGE: &str = concat!("sleeptool ", env!("CARGO_PKG_VERSION"));
 
 pub fn parse_args(args: &[String]) -> Result<Cli, String> {
     let mut hibernate = false;

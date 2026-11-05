@@ -1,4 +1,4 @@
-use sleeptool_rs::monitors::threshold::{evaluate, ThresholdState};
+use sleeptool::monitors::threshold::{evaluate, ThresholdState};
 
 #[test]
 fn inactive_below_threshold_first_sample() {

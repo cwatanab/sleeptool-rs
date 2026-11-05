@@ -1,11 +1,11 @@
-//! トレイ右クリックメニュー。
+//! トレイ右クリックメニュー（Windows ネイティブ描画）。
 
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{HWND, POINT};
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, DestroyMenu, GetCursorPos, SetForegroundWindow, TrackPopupMenu,
     HMENU, MF_CHECKED, MF_DISABLED, MF_GRAYED, MF_POPUP, MF_SEPARATOR, MF_STRING, MF_UNCHECKED,
-    TPM_NONOTIFY, TPM_RETURNCMD,
+    TPM_LEFTALIGN, TPM_RETURNCMD,
 };
 
 use crate::config::Config;
@@ -26,7 +26,7 @@ unsafe fn append_item(hmenu: HMENU, id: usize, text: &str, checked: bool, enable
 }
 
 unsafe fn append_separator(hmenu: HMENU) {
-    let _ = AppendMenuW(hmenu, MF_SEPARATOR, 0, PCWSTR(std::ptr::null()));
+    let _ = AppendMenuW(hmenu, MF_SEPARATOR, 0, PCWSTR::null());
 }
 
 pub enum MenuChoice {
@@ -46,6 +46,7 @@ pub enum Toggle {
     WarnBeforeSleep,
     DisplayOffOnSleep,
     SoundMonitor,
+    Widget,
 }
 
 struct Preset {
@@ -114,8 +115,16 @@ const DISK_WRITE_PRESETS: &[Preset] = &[
 fn matches_preset(enabled: bool, threshold: f64, presets: &[Preset]) -> usize {
     for p in presets {
         match p.value {
-            None => { if !enabled { return p.id; } }
-            Some(v) => { if enabled && threshold == v { return p.id; } }
+            None => {
+                if !enabled {
+                    return p.id;
+                }
+            }
+            Some(v) => {
+                if enabled && threshold == v {
+                    return p.id;
+                }
+            }
         }
     }
     0
@@ -131,18 +140,20 @@ unsafe fn build_submenu(hmenu: HMENU, label: &str, presets: &[Preset], checked_i
 }
 
 const OPT_ITEMS: &[(usize, &str, Toggle)] = &[
-    (2401, "休止状態を使う",           Toggle::Hibernate),
-    (2402, "スリープ前に警告",          Toggle::WarnBeforeSleep),
-    (2405, "スリープ時ディスプレイOFF",  Toggle::DisplayOffOnSleep),
-    (2406, "音声モニター",             Toggle::SoundMonitor),
+    (2401, "休止状態を使う", Toggle::Hibernate),
+    (2402, "スリープ前に警告", Toggle::WarnBeforeSleep),
+    (2405, "スリープ時ディスプレイOFF", Toggle::DisplayOffOnSleep),
+    (2406, "音声モニター", Toggle::SoundMonitor),
+    (2407, "リソース監視HUD", Toggle::Widget),
 ];
 
-fn opts_checked(config: &Config) -> [bool; 4] {
+fn opts_checked(config: &Config) -> [bool; 5] {
     [
         config.sleep.hibernate,
         config.sleep.warn_before_sleep,
         config.general.display_off_on_sleep,
         config.sound.enabled,
+        config.widget.enabled,
     ]
 }
 
@@ -163,13 +174,25 @@ pub unsafe fn show(hwnd: HWND, state: &SharedState) -> MenuChoice {
     let cpu_checked = matches_preset(config.cpu.enabled, config.cpu.threshold, CPU_PRESETS);
     build_submenu(hmenu, "CPU 使用率", CPU_PRESETS, cpu_checked);
 
-    let net_checked = matches_preset(config.network.enabled, config.network.threshold, NETWORK_PRESETS);
+    let net_checked = matches_preset(
+        config.network.enabled,
+        config.network.threshold,
+        NETWORK_PRESETS,
+    );
     build_submenu(hmenu, "ネットワーク", NETWORK_PRESETS, net_checked);
 
-    let disk_checked = matches_preset(config.disk.write_enabled, config.disk.write_threshold, DISK_WRITE_PRESETS);
+    let disk_checked = matches_preset(
+        config.disk.write_enabled,
+        config.disk.write_threshold,
+        DISK_WRITE_PRESETS,
+    );
     build_submenu(hmenu, "ディスク書込", DISK_WRITE_PRESETS, disk_checked);
 
-    let sleep_checked = matches_preset(true, config.sleep.delay_seconds as f64, SLEEP_DELAY_PRESETS);
+    let sleep_checked = matches_preset(
+        true,
+        config.sleep.delay_seconds as f64,
+        SLEEP_DELAY_PRESETS,
+    );
     build_submenu(hmenu, "スリープ待機時間", SLEEP_DELAY_PRESETS, sleep_checked);
 
     append_separator(hmenu);
@@ -186,7 +209,7 @@ pub unsafe fn show(hwnd: HWND, state: &SharedState) -> MenuChoice {
 
     let cmd = TrackPopupMenu(
         hmenu,
-        TPM_RETURNCMD | TPM_NONOTIFY,
+        TPM_RETURNCMD | TPM_LEFTALIGN,
         pt.x,
         pt.y,
         0,
@@ -196,13 +219,31 @@ pub unsafe fn show(hwnd: HWND, state: &SharedState) -> MenuChoice {
     let cmd_id = cmd.0 as usize;
     let _ = DestroyMenu(hmenu);
 
-    for p in CPU_PRESETS { if p.id == cmd_id { return MenuChoice::SetCpu(p.value); } }
-    for p in NETWORK_PRESETS { if p.id == cmd_id { return MenuChoice::SetNetwork(p.value); } }
-    for p in DISK_WRITE_PRESETS { if p.id == cmd_id { return MenuChoice::SetDiskWrite(p.value); } }
-    for p in SLEEP_DELAY_PRESETS { if p.id == cmd_id { return MenuChoice::SetSleepDelay(p.value.unwrap() as u64); } }
+    for p in CPU_PRESETS {
+        if p.id == cmd_id {
+            return MenuChoice::SetCpu(p.value);
+        }
+    }
+    for p in NETWORK_PRESETS {
+        if p.id == cmd_id {
+            return MenuChoice::SetNetwork(p.value);
+        }
+    }
+    for p in DISK_WRITE_PRESETS {
+        if p.id == cmd_id {
+            return MenuChoice::SetDiskWrite(p.value);
+        }
+    }
+    for p in SLEEP_DELAY_PRESETS {
+        if p.id == cmd_id {
+            return MenuChoice::SetSleepDelay(p.value.unwrap() as u64);
+        }
+    }
 
     for &(id, _, ref toggle) in OPT_ITEMS {
-        if id == cmd_id { return MenuChoice::Toggle(*toggle); }
+        if id == cmd_id {
+            return MenuChoice::Toggle(*toggle);
+        }
     }
 
     match cmd_id {

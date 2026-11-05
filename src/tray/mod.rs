@@ -2,6 +2,7 @@
 
 mod icon;
 mod menu;
+pub(crate) mod theme;
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
@@ -14,8 +15,8 @@ use windows::Win32::UI::Shell::{
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW, GetWindowLongPtrW,
     HMENU, PostMessageW, PostQuitMessage, RegisterClassW, SetWindowLongPtrW, TranslateMessage,
-    CREATESTRUCTW, GWLP_USERDATA, MSG, WNDCLASSW, WM_CREATE, WM_DESTROY, WM_LBUTTONDBLCLK,
-    WM_RBUTTONUP, WM_SETTINGCHANGE, WM_USER, WS_POPUP,
+    CREATESTRUCTW, GWLP_USERDATA, MSG, WNDCLASSW, WM_CREATE, WM_DESTROY,
+    WM_LBUTTONDBLCLK, WM_RBUTTONUP, WM_SETTINGCHANGE, WM_USER, WS_POPUP,
     RegisterWindowMessageW, ChangeWindowMessageFilter, MSGFLT_ADD,
 };
 
@@ -95,6 +96,8 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
             ctx.hwnd = hwnd;
             ctx.platform.tray_hwnd.store(hwnd.0 as isize, Ordering::Relaxed);
 
+            theme::setup_theme_for_window(hwnd);
+
             register_tray_icon(hwnd, ctx);
             return LRESULT(0);
         }
@@ -114,6 +117,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
             return LRESULT(0);
         }
         WM_SETTINGCHANGE => {
+            theme::refresh_menu_theme(hwnd);
             let _ = PostMessageW(hwnd, WM_UPDATE_TRAY, WPARAM(0), LPARAM(0));
             return LRESULT(0);
         }
@@ -145,6 +149,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
                 let ctx_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA);
                 if ctx_ptr != 0 {
                     let ctx = &mut *(ctx_ptr as *mut TrayContext);
+                    theme::setup_theme_for_window(hwnd);
                     let choice = menu::show(hwnd, &ctx.state);
                     handle_menu_choice(hwnd, ctx, choice);
                 }
@@ -193,12 +198,18 @@ unsafe fn handle_menu_choice(hwnd: HWND, ctx: &mut TrayContext, choice: menu::Me
         menu::MenuChoice::SetSleepDelay(v) => update_config(&ctx.state, |c| {
             c.sleep.delay_seconds = v;
         }),
-        menu::MenuChoice::Toggle(t) => update_config(&ctx.state, |c| match t {
-            menu::Toggle::Hibernate => c.sleep.hibernate = !c.sleep.hibernate,
-            menu::Toggle::WarnBeforeSleep => c.sleep.warn_before_sleep = !c.sleep.warn_before_sleep,
-            menu::Toggle::DisplayOffOnSleep => c.general.display_off_on_sleep = !c.general.display_off_on_sleep,
-            menu::Toggle::SoundMonitor => c.sound.enabled = !c.sound.enabled,
-        }),
+        menu::MenuChoice::Toggle(t) => match t {
+            menu::Toggle::Widget => unsafe {
+                crate::widget::toggle_widget(&ctx.state);
+            },
+            _ => update_config(&ctx.state, |c| match t {
+                menu::Toggle::Hibernate => c.sleep.hibernate = !c.sleep.hibernate,
+                menu::Toggle::WarnBeforeSleep => c.sleep.warn_before_sleep = !c.sleep.warn_before_sleep,
+                menu::Toggle::DisplayOffOnSleep => c.general.display_off_on_sleep = !c.general.display_off_on_sleep,
+                menu::Toggle::SoundMonitor => c.sound.enabled = !c.sound.enabled,
+                menu::Toggle::Widget => unreachable!(),
+            }),
+        },
     }
 }
 
@@ -228,6 +239,7 @@ fn tooltip_text(factor: Option<InhibitFactor>, paused: bool, platform: &Arc<Wind
 
 pub fn run_tray(state: SharedState, running: Arc<AtomicBool>, platform: Arc<WindowsPlatform>) -> anyhow::Result<()> {
     unsafe {
+        theme::initialize_app_theme();
         let taskbar_created = RegisterWindowMessageW(w!("TaskbarCreated"));
         WM_TASKBAR_CREATED.store(taskbar_created, Ordering::Relaxed);
         if taskbar_created != 0 {

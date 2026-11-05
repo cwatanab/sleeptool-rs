@@ -226,51 +226,171 @@ fn resize_rgba(rgba: &[u8], src_w: u32, src_h: u32, dst_w: u32, dst_h: u32) -> V
         return rgba.to_vec();
     }
     let mut dst = vec![0u8; (dst_w * dst_h * 4) as usize];
-    for y in 0..dst_h {
-        let src_y = (y * src_h / dst_h) as usize;
-        for x in 0..dst_w {
-            let src_x = (x * src_w / dst_w) as usize;
-            let src_idx = (src_y * src_w as usize + src_x) * 4;
-            let dst_idx = (y as usize * dst_w as usize + x as usize) * 4;
-            dst[dst_idx..dst_idx+4].copy_from_slice(&rgba[src_idx..src_idx+4]);
+    for dst_y in 0..dst_h {
+        let y_start = (dst_y * src_h) / dst_h;
+        let y_end = (((dst_y + 1) * src_h) / dst_h).max(y_start + 1);
+        for dst_x in 0..dst_w {
+            let x_start = (dst_x * src_w) / dst_w;
+            let x_end = (((dst_x + 1) * src_w) / dst_w).max(x_start + 1);
+
+            let mut r_sum = 0u64;
+            let mut g_sum = 0u64;
+            let mut b_sum = 0u64;
+            let mut a_sum = 0u64;
+            let mut total_pixels = 0u64;
+
+            for y in y_start..y_end {
+                for x in x_start..x_end {
+                    let idx = ((y * src_w + x) * 4) as usize;
+                    let a = rgba[idx + 3] as u64;
+                    r_sum += (rgba[idx] as u64) * a;
+                    g_sum += (rgba[idx + 1] as u64) * a;
+                    b_sum += (rgba[idx + 2] as u64) * a;
+                    a_sum += a;
+                    total_pixels += 1;
+                }
+            }
+
+            let dst_idx = ((dst_y * dst_w + dst_x) * 4) as usize;
+            if a_sum > 0 {
+                dst[dst_idx] = (r_sum / a_sum) as u8;
+                dst[dst_idx + 1] = (g_sum / a_sum) as u8;
+                dst[dst_idx + 2] = (b_sum / a_sum) as u8;
+                dst[dst_idx + 3] = (a_sum / total_pixels) as u8;
+            } else {
+                dst[dst_idx] = 0;
+                dst[dst_idx + 1] = 0;
+                dst[dst_idx + 2] = 0;
+                dst[dst_idx + 3] = 0;
+            }
         }
     }
     dst
 }
 
+fn create_dib_entry(rgba: &[u8], w: u32, h: u32) -> Vec<u8> {
+    let bi_size = 40u32;
+    let bi_width = w as i32;
+    let bi_height = (h * 2) as i32; // Doubled height for icon XOR+AND masks
+    let bi_planes = 1u16;
+    let bi_bit_count = 32u16;
+    let bi_compression = 0u32; // BI_RGB
+    let xor_size = (w * h * 4) as usize;
+    let and_row_bytes = (((w + 31) / 32) * 4) as usize;
+    let and_size = and_row_bytes * (h as usize);
+    let bi_size_image = (xor_size + and_size) as u32;
+
+    let mut dib = Vec::with_capacity(40 + xor_size + and_size);
+    // BITMAPINFOHEADER (40 bytes)
+    dib.extend_from_slice(&bi_size.to_le_bytes());
+    dib.extend_from_slice(&bi_width.to_le_bytes());
+    dib.extend_from_slice(&bi_height.to_le_bytes());
+    dib.extend_from_slice(&bi_planes.to_le_bytes());
+    dib.extend_from_slice(&bi_bit_count.to_le_bytes());
+    dib.extend_from_slice(&bi_compression.to_le_bytes());
+    dib.extend_from_slice(&bi_size_image.to_le_bytes());
+    dib.extend_from_slice(&0i32.to_le_bytes()); // XPelsPerMeter
+    dib.extend_from_slice(&0i32.to_le_bytes()); // YPelsPerMeter
+    dib.extend_from_slice(&0u32.to_le_bytes()); // ClrUsed
+    dib.extend_from_slice(&0u32.to_le_bytes()); // ClrImportant
+
+    // XOR data: 32-bit BGRA, bottom-up
+    let mut xor_data = vec![0u8; xor_size];
+    for y in 0..h {
+        let src_y = y as usize;
+        let dst_y = (h - 1 - y) as usize;
+        for x in 0..w as usize {
+            let si = (src_y * (w as usize) + x) * 4;
+            let di = (dst_y * (w as usize) + x) * 4;
+            let (r, g, b, a) = (rgba[si], rgba[si + 1], rgba[si + 2], rgba[si + 3]);
+            xor_data[di] = b;
+            xor_data[di + 1] = g;
+            xor_data[di + 2] = r;
+            xor_data[di + 3] = a;
+        }
+    }
+    dib.extend_from_slice(&xor_data);
+
+    // AND mask: 1-bit per pixel, bottom-up (1 for transparent, 0 for opaque)
+    let mut and_data = vec![0u8; and_size];
+    for y in 0..h {
+        let src_y = y as usize;
+        let dst_y = (h - 1 - y) as usize;
+        let row_offset = dst_y * and_row_bytes;
+        for x in 0..w as usize {
+            let si = (src_y * (w as usize) + x) * 4;
+            let a = rgba[si + 3];
+            if a == 0 {
+                and_data[row_offset + (x / 8)] |= 1 << (7 - (x % 8));
+            }
+        }
+    }
+    dib.extend_from_slice(&and_data);
+
+    dib
+}
+
 fn write_ico_from_png(png_path: &Path, ico_path: &Path) -> Option<()> {
     let png_data = fs::read(png_path).ok()?;
-    let decoder = png::Decoder::new(std::io::Cursor::new(&png_data));
-    let reader = decoder.read_info().ok()?;
-    let w = reader.info().width;
-    let h = reader.info().height;
+    let (w, h, rgba) = decode_png_file(png_path)?;
 
+    // マルチ解像度アイコンエントリを生成: 256x256 (PNG), 48x48 (DIB), 32x32 (DIB), 16x16 (DIB)
+    struct IcoImg {
+        w: u8,
+        h: u8,
+        planes: u16,
+        bit_count: u16,
+        data: Vec<u8>,
+    }
+
+    let mut images = Vec::new();
+
+    // 256x256 PNG
+    images.push(IcoImg {
+        w: if w >= 256 { 0 } else { w as u8 },
+        h: if h >= 256 { 0 } else { h as u8 },
+        planes: 1,
+        bit_count: 32,
+        data: png_data,
+    });
+
+    // 48, 32, 16 DIB
+    for &size in &[48u32, 32u32, 16u32] {
+        let resized = resize_rgba(&rgba, w, h, size, size);
+        let dib = create_dib_entry(&resized, size, size);
+        images.push(IcoImg {
+            w: size as u8,
+            h: size as u8,
+            planes: 1,
+            bit_count: 32,
+            data: dib,
+        });
+    }
+
+    let count = images.len() as u16;
     let mut ico = Vec::new();
-    // ヘッダー: Reserved(0) u16, Type(1) u16, Count(1) u16
+    // ヘッダー: Reserved(0) u16, Type(1) u16, Count u16
     ico.extend_from_slice(&0u16.to_le_bytes());
     ico.extend_from_slice(&1u16.to_le_bytes());
-    ico.extend_from_slice(&1u16.to_le_bytes());
+    ico.extend_from_slice(&count.to_le_bytes());
 
-    // ディレクトリエントリ
-    let w_byte = if w >= 256 { 0u8 } else { w as u8 };
-    let h_byte = if h >= 256 { 0u8 } else { h as u8 };
-    ico.push(w_byte);
-    ico.push(h_byte);
-    ico.push(0); // ColorCount
-    ico.push(0); // Reserved
+    // ヘッダー (6) + ディレクトリエントリ (count * 16)
+    let mut offset = 6 + (count as u32) * 16;
+    for img in &images {
+        ico.push(img.w);
+        ico.push(img.h);
+        ico.push(0); // ColorCount
+        ico.push(0); // Reserved
+        ico.extend_from_slice(&img.planes.to_le_bytes());
+        ico.extend_from_slice(&img.bit_count.to_le_bytes());
+        ico.extend_from_slice(&(img.data.len() as u32).to_le_bytes());
+        ico.extend_from_slice(&offset.to_le_bytes());
+        offset += img.data.len() as u32;
+    }
 
-    // Planes(1) u16, BitCount(32) u16
-    ico.extend_from_slice(&1u16.to_le_bytes());
-    ico.extend_from_slice(&32u16.to_le_bytes());
-
-    // BytesInRes (PNGデータサイズ) u32
-    ico.extend_from_slice(&(png_data.len() as u32).to_le_bytes());
-
-    // ImageOffset (ヘッダー6バイト + エントリ16バイト = 22) u32
-    ico.extend_from_slice(&22u32.to_le_bytes());
-
-    // PNGデータ本体
-    ico.extend_from_slice(&png_data);
+    for img in &images {
+        ico.extend_from_slice(&img.data);
+    }
 
     fs::write(ico_path, ico).ok()?;
     Some(())

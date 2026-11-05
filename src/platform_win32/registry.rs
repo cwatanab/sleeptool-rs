@@ -10,7 +10,7 @@ use crate::error::Result;
 use super::util::{check_win32, to_wstring};
 
 const SUBKEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
-const VALUE_NAME: &str = "SleepToolRust";
+const VALUE_NAME: &str = "SleepTool";
 
 pub fn set_auto_start(enable: bool) -> Result<()> {
     unsafe {

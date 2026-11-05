@@ -1,8 +1,8 @@
 mod common;
 
 use common::idle_and_cpu;
-use sleeptool_rs::config::Config;
-use sleeptool_rs::engine::{Engine, EngineDecision};
+use sleeptool::config::Config;
+use sleeptool::engine::{Engine, EngineDecision};
 
 #[test]
 fn test_sleep_when_completely_idle() {

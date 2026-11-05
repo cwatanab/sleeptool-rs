@@ -122,6 +122,33 @@ impl Default for GeneralConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WidgetConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_widget_x")]
+    pub x: i32,
+    #[serde(default = "default_widget_y")]
+    pub y: i32,
+    #[serde(default = "default_widget_alpha")]
+    pub alpha: u8,
+}
+
+fn default_widget_x() -> i32 { 100 }
+fn default_widget_y() -> i32 { 100 }
+fn default_widget_alpha() -> u8 { 210 }
+
+impl Default for WidgetConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            x: default_widget_x(),
+            y: default_widget_y(),
+            alpha: default_widget_alpha(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Config {
     #[serde(default)]
     pub sleep: SleepConfig,
@@ -137,6 +164,8 @@ pub struct Config {
     pub process: ProcessConfig,
     #[serde(default)]
     pub general: GeneralConfig,
+    #[serde(default)]
+    pub widget: WidgetConfig,
 }
 
 impl Default for Config {
@@ -149,6 +178,7 @@ impl Default for Config {
             sound: SoundConfig::default(),
             process: ProcessConfig::default(),
             general: GeneralConfig::default(),
+            widget: WidgetConfig::default(),
         }
     }
 }
@@ -174,7 +204,7 @@ impl Config {
         static DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
         DIR.get_or_init(|| {
             let local_app_data = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| ".".to_string());
-            std::path::PathBuf::from(local_app_data).join("SleepToolRust")
+            std::path::PathBuf::from(local_app_data).join("SleepTool")
         }).as_path()
     }
 

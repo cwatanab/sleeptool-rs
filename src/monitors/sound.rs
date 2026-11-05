@@ -1,13 +1,23 @@
 use crate::config::Config;
 use crate::error::Result;
+use crate::monitors::threshold::{evaluate, ThresholdState};
 use crate::monitors::{InhibitFactor, Monitor, MonitorState};
 use crate::platform::{AudioProbe, PerformanceSnapshot, Platform};
 
-pub struct SoundMonitor;
+/// 音声再生停止後のスリープ阻止猶予時間（秒）
+const SOUND_DELAY_SECONDS: u64 = 15;
+/// 音声検知のしきい値
+const SOUND_THRESHOLD: f64 = 0.01;
+
+pub struct SoundMonitor {
+    state: ThresholdState,
+}
 
 impl SoundMonitor {
     pub fn new() -> Self {
-        Self
+        Self {
+            state: ThresholdState::default(),
+        }
     }
 }
 
@@ -22,12 +32,12 @@ impl Monitor for SoundMonitor {
 
     fn sample(&mut self, _config: &Config, platform: &dyn Platform, _perf: &PerformanceSnapshot) -> Result<MonitorState> {
         let rms = AudioProbe::current_sound_rms(platform)?;
-        let threshold = 0.01;
+        let inhibit = evaluate(&mut self.state, rms, SOUND_THRESHOLD, SOUND_DELAY_SECONDS);
         Ok(MonitorState {
-            inhibit: rms >= threshold,
+            inhibit,
             factor: self.default_factor(),
             value: rms,
-            threshold,
+            threshold: SOUND_THRESHOLD,
         })
     }
 }

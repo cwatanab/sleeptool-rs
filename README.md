@@ -1,4 +1,4 @@
-# SleepTool Rust (sleeptool-rs)
+# SleepTool Rust (sleeptool)
 
 Windows版 SleepTool を Rust + 純粋な Win32 API で極限まで軽量・高速に再実装した常駐ツールです。
 `winit` や `tray-icon` などの重い GUI フレームワークや `tokio` 非同期ランタイムを一切使用せず、Windows のネイティブシステムコールとメッセージループのみで動作します。
@@ -34,15 +34,38 @@ Windows版 SleepTool を Rust + 純粋な Win32 API で極限まで軽量・高�
 
 ビルドには Rust ツールチェーンが必要です。
 
-```bash
+### 1. Windows 環境（MSVC ネイティブ）
+
+Visual Studio C++ Build Tools および Rust ツールチェーン（`x86_64-pc-windows-msvc`）が必要です。
+
+```powershell
+# ターゲット追加（未追加の場合）
+rustup target add x86_64-pc-windows-msvc
+
 # リリース用バイナリのビルド
-cargo build --release
+cargo build --release --target x86_64-pc-windows-msvc
+# （デフォルトターゲットが MSVC の場合は cargo build --release で可）
 ```
+
+### 2. Linux / macOS 環境からのクロスコンパイル（MSVC）
+
+Linux などの非 Windows 環境から MSVC ターゲット向けにビルドする場合は、[`cargo-xwin`](https://github.com/rust-cross/cargo-xwin) を使用します。必要な Windows SDK や CRT を自動的に取得してリンクします。
+
+```bash
+# cargo-xwin のインストールとターゲット追加
+cargo install cargo-xwin
+rustup target add x86_64-pc-windows-msvc
+
+# MSVC リリースバイナリのビルド
+cargo xwin build --target x86_64-pc-windows-msvc --release
+```
+
+ビルド完了後、バイナリは `target/x86_64-pc-windows-msvc/release/sleeptool.exe` に出力されます。
 
 ## 🚀 実行方法
 
-```bash
-.\target\release\sleeptool-rs.exe
+```powershell
+.\target\x86_64-pc-windows-msvc\release\sleeptool.exe
 ```
 
 - **コマンドライン引数**:
@@ -53,5 +76,5 @@ cargo build --release
 
 設定は以下のパスに自動的に作成・保存されます。
 
-- **設定ファイル**: `%LOCALAPPDATA%\SleepToolRust\config.toml`
-- **ログファイル**: `%LOCALAPPDATA%\SleepToolRust\logs\`
+- **設定ファイル**: `%LOCALAPPDATA%\SleepTool\config.toml`
+- **ログファイル**: `%LOCALAPPDATA%\SleepTool\logs\`

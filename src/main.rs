@@ -1,14 +1,14 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use sleeptool_rs::cli::Cli;
-use sleeptool_rs::config::{Config, LogLevel};
-use sleeptool_rs::tracing;
-use sleeptool_rs::engine::{Engine, EngineDecision};
-use sleeptool_rs::logging;
-use sleeptool_rs::monitors::InhibitFactor;
-use sleeptool_rs::platform_win32::WindowsPlatform;
-use sleeptool_rs::sleep;
-use sleeptool_rs::state::{AppState, SharedState};
+use sleeptool::cli::Cli;
+use sleeptool::config::{Config, LogLevel};
+use sleeptool::tracing;
+use sleeptool::engine::{Engine, EngineDecision};
+use sleeptool::logging;
+use sleeptool::monitors::InhibitFactor;
+use sleeptool::platform_win32::WindowsPlatform;
+use sleeptool::sleep;
+use sleeptool::state::{AppState, SharedState};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -76,20 +76,26 @@ fn main() -> anyhow::Result<()> {
         }
     });
 
+    let widget_state = state.clone();
+    let widget_running = running.clone();
+    let widget_handle = sleeptool::widget::spawn_widget(widget_state, widget_running)?;
+
     let tray_state = state.clone();
     let tray_running = running.clone();
     let tray_platform = platform.clone();
-    let tray_result = sleeptool_rs::tray::run_tray(tray_state, tray_running, tray_platform);
+    let tray_result = sleeptool::tray::run_tray(tray_state, tray_running, tray_platform);
 
     if let Err(e) = tray_result {
         tracing::error!("Tray error: {:?}", e);
         running.store(false, Ordering::Relaxed);
         let _ = monitor_handle.join();
+        let _ = widget_handle.join();
         return Err(e);
     }
 
     running.store(false, Ordering::Relaxed);
     let _ = monitor_handle.join();
+    let _ = widget_handle.join();
 
     Ok(())
 }
@@ -104,7 +110,7 @@ fn run_monitor(
     let mut prev_factor: Option<InhibitFactor> = None;
     let mut was_paused = false;
 
-    sleeptool_rs::platform_win32::optimize_memory();
+    sleeptool::platform_win32::optimize_memory();
 
     while running.load(Ordering::Relaxed) {
         let (current_config, is_paused) = {
@@ -131,10 +137,16 @@ fn run_monitor(
             unsafe {
                 let _ = windows::Win32::UI::WindowsAndMessaging::PostMessageW(
                     windows::Win32::Foundation::HWND(hwnd as *mut std::ffi::c_void),
-                    sleeptool_rs::tray::WM_UPDATE_TRAY,
+                    sleeptool::tray::WM_UPDATE_TRAY,
                     windows::Win32::Foundation::WPARAM(0),
                     windows::Win32::Foundation::LPARAM(0),
                 );
+            }
+        }
+
+        if let Ok(perf) = sleeptool::platform::PerformanceProbe::query_performance(platform.as_ref()) {
+            unsafe {
+                sleeptool::widget::notify_widget_update(&state, &perf);
             }
         }
 
@@ -173,7 +185,7 @@ fn run_monitor(
                 was_paused = false;
             }
         }
-        sleeptool_rs::platform_win32::optimize_memory();
+        sleeptool::platform_win32::optimize_memory();
     }
     Ok(())
 }

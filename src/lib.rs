@@ -9,6 +9,7 @@ pub mod platform_win32;
 pub mod sleep;
 pub mod state;
 pub mod tray;
+pub mod widget;
 
 pub mod tracing {
     pub use crate::{debug, error, info, warn};

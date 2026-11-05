@@ -1,4 +1,4 @@
-use sleeptool_rs::config::{Config, LogLevel};
+use sleeptool::config::{Config, LogLevel};
 
 #[test]
 fn test_default_config() {
@@ -142,7 +142,7 @@ fn config_dir_returns_static_ref() {
     // 戻り値の型が `&'static Path` であることを強制する。
     // これにより内部で `OnceLock<PathBuf>` キャッシュしていることを示す。
     let p: &'static std::path::Path = Config::config_dir();
-    assert!(p.ends_with("SleepToolRust"));
+    assert!(p.ends_with("SleepTool"));
 }
 
 #[test]

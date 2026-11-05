@@ -3,8 +3,8 @@
 
 mod common;
 
-use sleeptool_rs::error::Result;
-use sleeptool_rs::platform::{
+use sleeptool::error::Result;
+use sleeptool::platform::{
     AudioProbe, InputProbe, Notifier, PerformanceProbe, PerformanceSnapshot, Platform,
     PowerControl, ProcessProbe, SleepType, StartupControl,
 };

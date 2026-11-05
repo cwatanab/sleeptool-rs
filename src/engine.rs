@@ -86,15 +86,64 @@ impl Engine {
         }
         let perf = PerformanceProbe::query_performance(platform)?;
         let mut top: Option<MonitorState> = None;
+        let mut summary = String::with_capacity(128);
+
         for monitor in &mut self.monitors {
             if monitor.is_enabled(config) {
                 let state = monitor.sample(config, platform, &perf)?;
+                if !summary.is_empty() {
+                    summary.push_str(" | ");
+                }
+                format_monitor_compact(&mut summary, &state);
+
                 if state.inhibit && top.map_or(true, |t| state.factor.priority() < t.factor.priority()) {
                     top = Some(state);
                 }
             }
         }
-        if let Some(ms) = top { return Ok(EngineDecision::Inhibit(ms)); }
+
+        if let Some(ms) = top {
+            crate::tracing::debug!("[INHIBIT: {}] {}", ms.factor.label(), summary);
+            return Ok(EngineDecision::Inhibit(ms));
+        }
+
+        crate::tracing::debug!("[SLEEP_READY] {}", summary);
         Ok(EngineDecision::Sleep)
+    }
+}
+
+fn format_monitor_compact(out: &mut String, state: &MonitorState) {
+    use std::fmt::Write;
+    let mark = if state.inhibit { "*" } else { "" };
+    match state.factor {
+        InhibitFactor::Input => {
+            let _ = write!(out, "{mark}In: {:.0}s/{:.0}s", state.value, state.threshold);
+        }
+        InhibitFactor::Cpu => {
+            let _ = write!(out, "{mark}CPU: {:.1}%/{:.0}%", state.value, state.threshold);
+        }
+        InhibitFactor::Network => {
+            let _ = write!(out, "{mark}Net: {:.0}/{:.0}KB/s", state.value, state.threshold);
+        }
+        InhibitFactor::DiskWrite => {
+            let _ = write!(out, "{mark}DiskW: {:.0}/{:.0}KB/s", state.value / 1024.0, state.threshold / 1024.0);
+        }
+        InhibitFactor::DiskRead => {
+            let _ = write!(out, "{mark}DiskR: {:.0}/{:.0}KB/s", state.value / 1024.0, state.threshold / 1024.0);
+        }
+        InhibitFactor::Sound => {
+            if state.value >= 1.0 {
+                let _ = write!(out, "{mark}Sound: ACTIVE");
+            } else {
+                let _ = write!(out, "{mark}Sound: {:.2}/{:.2}", state.value, state.threshold);
+            }
+        }
+        InhibitFactor::Process => {
+            if state.value > 0.0 {
+                let _ = write!(out, "{mark}Proc: active({:.0})", state.value);
+            } else {
+                let _ = write!(out, "Proc: none");
+            }
+        }
     }
 }
