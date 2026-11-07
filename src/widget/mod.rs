@@ -121,7 +121,7 @@ pub unsafe fn render_widget(ctx: &mut WidgetContext) {
     let dark = crate::tray::theme::is_system_dark_mode();
     let text_color = if dark { COLORREF(0x00FFFFFF) } else { COLORREF(0x00141414) };
     let alert_color = if dark { COLORREF(0x006060FF) } else { COLORREF(0x000000C0) };
-    let chart_background = if dark { COLORREF(0x0024201C) } else { COLORREF(0x00E8E8E8) };
+    let chart_background = if dark { COLORREF(0x0038302A) } else { COLORREF(0x00EEEEEE) };
     let background = if dark { COLORREF(0x00141210) } else { COLORREF(0x00F7F7F7) };
     let border = if dark { COLORREF(0x00453E38) } else { COLORREF(0x00B8B8B8) };
 
@@ -331,23 +331,23 @@ unsafe fn draw_metric_row(
     FillRect(hdc, &chart_rect, chart_bg);
     let _ = DeleteObject(chart_bg);
 
-    // 3. チャート折れ線 (2px の太い線でくっきり描画)
+    // 3. チャート折れ線 (1px の繊細な細線で描画)
     let (pts, count) = history.build_points(chart_x, chart_y, chart_w, chart_h, max_scale);
     if count >= 2 {
-        let pen = CreatePen(PS_SOLID, 2, color);
+        let pen = CreatePen(PS_SOLID, 1, color);
         let old_pen = SelectObject(hdc, pen);
         let _ = Polyline(hdc, &pts[..count]);
         SelectObject(hdc, old_pen);
         let _ = DeleteObject(pen);
 
-        // 最新値（右端）のポイントに小さな丸ドットを描画
+        // 最新値（右端）のポイントに小さな丸ドットを描画 (細線に合わせて 3x3 ドット)
         let last_pt = pts[count - 1];
         let dot_brush = CreateSolidBrush(color);
         let dot_rect = RECT {
-            left: last_pt.x - 2,
-            top: last_pt.y - 2,
-            right: last_pt.x + 3,
-            bottom: last_pt.y + 3,
+            left: last_pt.x - 1,
+            top: last_pt.y - 1,
+            right: last_pt.x + 2,
+            bottom: last_pt.y + 2,
         };
         FillRect(hdc, &dot_rect, dot_brush);
         let _ = DeleteObject(dot_brush);
