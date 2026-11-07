@@ -226,13 +226,18 @@ fn tooltip_text(factor: Option<InhibitFactor>, paused: bool, platform: &Arc<Wind
         (_, None) => "",
     };
 
-    let prefix = concat!("SleepTool Rust v", env!("CARGO_PKG_VERSION"));
+    let prefix = concat!("SleepTool v", env!("CARGO_PKG_VERSION"));
     let mut out = format!("{}{}", prefix, factor_str);
 
     if let Ok(s) = PerformanceProbe::query_performance(platform.as_ref()) {
         use std::fmt::Write;
-        let _ = write!(out, "\n⚡ {:.0}%  🌐 {:.1}KB/s  💾 {:.1}KB/s",
-            s.cpu_percent, s.network_bytes_per_sec / 1000.0, s.disk_write_bytes_per_sec / 1000.0);
+        let _ = write!(
+            out,
+            "\nCPU: {:.0}%  NET: {:.1}KB/s  DISK: {:.1}KB/s",
+            s.cpu_percent,
+            s.network_bytes_per_sec / 1000.0,
+            s.disk_write_bytes_per_sec / 1000.0
+        );
     }
     out
 }
