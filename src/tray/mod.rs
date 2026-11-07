@@ -226,7 +226,7 @@ fn tooltip_text(factor: Option<InhibitFactor>, paused: bool, platform: &Arc<Wind
         (_, None) => "",
     };
 
-    let prefix = concat!("SleepTool Rust v", env!("CARGO_PKG_VERSION"));
+    let prefix = concat!("SleepTool v", env!("CARGO_PKG_VERSION"));
     let mut out = format!("{}{}", prefix, factor_str);
 
     if let Ok(s) = PerformanceProbe::query_performance(platform.as_ref()) {

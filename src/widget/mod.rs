@@ -9,10 +9,11 @@ use std::sync::Arc;
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    CreateCompatibleBitmap, CreateCompatibleDC, CreateFontW, CreatePen, CreateSolidBrush,
-    DeleteDC, DeleteObject, DrawTextW, FillRect, GetDC, Polyline, ReleaseDC, SelectObject,
-    SetBkMode, SetTextColor, BLENDFUNCTION, DT_LEFT, DT_NOCLIP, DT_RIGHT,
-    DT_SINGLELINE, DT_VCENTER, FW_NORMAL, HDC, HFONT, PS_SOLID, TRANSPARENT,
+    CreateCompatibleBitmap, CreateCompatibleDC, CreateFontW, CreatePen, CreatePolygonRgn,
+    CreateRoundRectRgn, CreateSolidBrush, DeleteDC, DeleteObject, DrawTextW, FillRect, FillRgn,
+    FrameRgn, GetDC, Polyline, ReleaseDC, SelectClipRgn, SelectObject, SetBkMode, SetTextColor,
+    SetWindowRgn, BLENDFUNCTION, DT_CENTER, DT_NOCLIP, DT_RIGHT, DT_SINGLELINE, DT_VCENTER,
+    FW_NORMAL, FW_SEMIBOLD, HDC, HFONT, HRGN, PS_DOT, PS_SOLID, TRANSPARENT, WINDING,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture;
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -31,8 +32,13 @@ use history::MetricHistory;
 pub const WM_WIDGET_UPDATE: u32 = WM_USER + 20;
 
 // アイコン表示、タイトル行なし、スパークライン拡大版のジャストフィットサイズ
-const WIDGET_WIDTH: i32 = 212;
+const WIDGET_WIDTH: i32 = 220;
 const WIDGET_HEIGHT: i32 = 88;
+
+#[inline(always)]
+const fn rgb(r: u8, g: u8, b: u8) -> COLORREF {
+    COLORREF((r as u32) | ((g as u32) << 8) | ((b as u32) << 16))
+}
 
 pub struct WidgetContext {
     pub state: SharedState,
@@ -119,49 +125,71 @@ pub unsafe fn render_widget(ctx: &mut WidgetContext) {
     let old_bmp = SelectObject(mem_dc, mem_bmp);
 
     let dark = crate::tray::theme::is_system_dark_mode();
-    let text_color = if dark { COLORREF(0x00FFFFFF) } else { COLORREF(0x00141414) };
-    let alert_color = if dark { COLORREF(0x006060FF) } else { COLORREF(0x000000C0) };
-    let chart_background = if dark { COLORREF(0x0038302A) } else { COLORREF(0x00EEEEEE) };
-    let background = if dark { COLORREF(0x00141210) } else { COLORREF(0x00F7F7F7) };
-    let border = if dark { COLORREF(0x00453E38) } else { COLORREF(0x00B8B8B8) };
 
-    // 背景描画
-    let bg_brush = CreateSolidBrush(background);
+    // テーマカラー設計（Fluent / Modern SaaS 階調）
+    let background = if dark { rgb(20, 23, 28) } else { rgb(252, 252, 254) };
+    let border_outer = if dark { rgb(50, 56, 66) } else { rgb(209, 213, 219) };
+    let border_inner = if dark { rgb(32, 37, 45) } else { rgb(243, 244, 246) };
+
+    let text_color = if dark { rgb(241, 245, 249) } else { rgb(17, 24, 39) };
+    let alert_color = if dark { rgb(248, 113, 113) } else { rgb(220, 38, 38) };
+    let alert_fill = if dark { rgb(52, 22, 25) } else { rgb(254, 226, 226) };
+
+    let chart_background = if dark { rgb(14, 16, 20) } else { rgb(241, 245, 249) };
+    let chart_border = if dark { rgb(38, 44, 53) } else { rgb(226, 232, 240) };
+    let guide_color = if dark { rgb(55, 65, 81) } else { rgb(203, 213, 225) };
+
+    // 1. エレガントな角丸カード背景（リソース消費ゼロ）
     let full_rect = RECT {
         left: 0,
         top: 0,
         right: WIDGET_WIDTH,
         bottom: WIDGET_HEIGHT,
     };
+    let bg_brush = CreateSolidBrush(background);
     FillRect(mem_dc, &full_rect, bg_brush);
     let _ = DeleteObject(bg_brush);
 
-    // 枠線（クッキリした外枠ボーダー）
-    let border_pen = CreatePen(PS_SOLID, 1, border);
-    let old_pen = SelectObject(mem_dc, border_pen);
-    let _ = windows::Win32::Graphics::Gdi::MoveToEx(mem_dc, 0, 0, None);
-    let _ = windows::Win32::Graphics::Gdi::LineTo(mem_dc, WIDGET_WIDTH - 1, 0);
-    let _ = windows::Win32::Graphics::Gdi::LineTo(mem_dc, WIDGET_WIDTH - 1, WIDGET_HEIGHT - 1);
-    let _ = windows::Win32::Graphics::Gdi::LineTo(mem_dc, 0, WIDGET_HEIGHT - 1);
-    let _ = windows::Win32::Graphics::Gdi::LineTo(mem_dc, 0, 0);
-    SelectObject(mem_dc, old_pen);
-    let _ = DeleteObject(border_pen);
+    // 外枠スリムボーダー (1px)
+    let card_rgn = CreateRoundRectRgn(0, 0, WIDGET_WIDTH, WIDGET_HEIGHT, 16, 16);
+    let border_brush = CreateSolidBrush(border_outer);
+    let _ = FrameRgn(mem_dc, card_rgn, border_brush, 1, 1);
+    let _ = DeleteObject(border_brush);
+    let _ = DeleteObject(card_rgn);
+
+    // インナーハイライト (1px インセット)
+    let inner_rgn = CreateRoundRectRgn(1, 1, WIDGET_WIDTH - 1, WIDGET_HEIGHT - 1, 14, 14);
+    let inner_brush = CreateSolidBrush(border_inner);
+    let _ = FrameRgn(mem_dc, inner_rgn, inner_brush, 1, 1);
+    let _ = DeleteObject(inner_brush);
+    let _ = DeleteObject(inner_rgn);
 
     SetBkMode(mem_dc, TRANSPARENT);
 
-    // 9pt Meiryo UI フォントとアイコン用フォントの作成
+    // ClearType 高品位 Segoe UI フォントの作成 (Segoe UI + Segoe UI Emoji)
     let font_metric = CreateFontW(
-        -12, 0, 0, 0, FW_NORMAL.0 as i32, 0, 0, 0, 0, 0, 0, 0, 0, w!("Meiryo UI"),
+        -12, 0, 0, 0, FW_SEMIBOLD.0 as i32, 0, 0, 0, 1, 0, 0, 5, 0, w!("Segoe UI"),
     );
     let font_icon = CreateFontW(
-        -12, 0, 0, 0, FW_NORMAL.0 as i32, 0, 0, 0, 0, 0, 0, 0, 0, w!("Segoe UI Emoji"),
+        -12, 0, 0, 0, FW_NORMAL.0 as i32, 0, 0, 0, 1, 0, 0, 5, 0, w!("Segoe UI Emoji"),
     );
     let old_font = SelectObject(mem_dc, font_metric);
 
-    // 行間余白をゆったり取って3行を配置 (行ピッチ 27px, 余白 9px)
-    // 行 1: CPU (0〜100%) - アイコン ⚡
+    // 行間余白をゆったり取って3行を配置 (y: 8, 34, 60, 余白 8px)
+    // 行 1: CPU (0〜100%) - アイコン ⚡ (アンバーゴールド系)
     let cur_cpu = ctx.cpu_history.last();
     let cpu_str = format!("{:.1}%", cur_cpu);
+    let is_cpu_alert = threshold_reached(&ctx.cpu_history, cpu_threshold);
+    let (cpu_color, cpu_fill_color, cpu_icon_color, cpu_text_color) = if is_cpu_alert {
+        (alert_color, alert_fill, alert_color, alert_color)
+    } else {
+        (
+            if dark { rgb(245, 158, 11) } else { rgb(217, 119, 6) },
+            if dark { rgb(46, 34, 16) } else { rgb(254, 243, 199) },
+            if dark { rgb(245, 158, 11) } else { rgb(217, 119, 6) },
+            text_color,
+        )
+    };
     draw_metric_row(
         mem_dc,
         "⚡",
@@ -169,18 +197,33 @@ pub unsafe fn render_widget(ctx: &mut WidgetContext) {
         font_metric,
         cpu_str,
         &ctx.cpu_history,
-        6,
+        8,
         100.0,
-        if dark { COLORREF(0x00FFA658) } else { COLORREF(0x00A65A00) },
-        if threshold_reached(&ctx.cpu_history, cpu_threshold) { alert_color } else { text_color },
-        text_color,
+        cpu_threshold,
+        cpu_color,
+        cpu_fill_color,
+        cpu_icon_color,
+        cpu_text_color,
         chart_background,
+        chart_border,
+        guide_color,
     );
 
-    // 行 2: ネット (KB/s, 動的オートスケーリング) - アイコン 🌐
+    // 行 2: ネット (KB/s, 動的オートスケーリング) - アイコン 🌐 (エメラルドミント系)
     let cur_net_kb = ctx.net_history.last();
     let net_scale = ctx.net_history.max().max(net_threshold.unwrap_or(0.0) * 1.2).max(20.0);
     let net_str = format_rate(cur_net_kb);
+    let is_net_alert = threshold_reached(&ctx.net_history, net_threshold);
+    let (net_color, net_fill_color, net_icon_color, net_text_color) = if is_net_alert {
+        (alert_color, alert_fill, alert_color, alert_color)
+    } else {
+        (
+            if dark { rgb(16, 185, 129) } else { rgb(5, 150, 105) },
+            if dark { rgb(16, 38, 28) } else { rgb(209, 250, 229) },
+            if dark { rgb(16, 185, 129) } else { rgb(5, 150, 105) },
+            text_color,
+        )
+    };
     draw_metric_row(
         mem_dc,
         "🌐",
@@ -188,18 +231,33 @@ pub unsafe fn render_widget(ctx: &mut WidgetContext) {
         font_metric,
         net_str,
         &ctx.net_history,
-        33,
+        34,
         net_scale,
-        if dark { COLORREF(0x0060D050) } else { COLORREF(0x00307820) },
-        if threshold_reached(&ctx.net_history, net_threshold) { alert_color } else { text_color },
-        text_color,
+        net_threshold,
+        net_color,
+        net_fill_color,
+        net_icon_color,
+        net_text_color,
         chart_background,
+        chart_border,
+        guide_color,
     );
 
-    // 行 3: ディスク (KB/s, 動的オートスケーリング) - アイコン 💾
+    // 行 3: ディスク (KB/s, 動的オートスケーリング) - アイコン 💾 (スカイシアン系)
     let cur_disk_kb = ctx.disk_history.last();
     let disk_scale = ctx.disk_history.max().max(disk_threshold.unwrap_or(0.0) * 1.2).max(50.0);
     let disk_str = format_rate(cur_disk_kb);
+    let is_disk_alert = threshold_reached(&ctx.disk_history, disk_threshold);
+    let (disk_color, disk_fill_color, disk_icon_color, disk_text_color) = if is_disk_alert {
+        (alert_color, alert_fill, alert_color, alert_color)
+    } else {
+        (
+            if dark { rgb(14, 165, 233) } else { rgb(2, 132, 199) },
+            if dark { rgb(14, 34, 46) } else { rgb(224, 242, 254) },
+            if dark { rgb(14, 165, 233) } else { rgb(2, 132, 199) },
+            text_color,
+        )
+    };
     draw_metric_row(
         mem_dc,
         "💾",
@@ -209,10 +267,14 @@ pub unsafe fn render_widget(ctx: &mut WidgetContext) {
         &ctx.disk_history,
         60,
         disk_scale,
-        if dark { COLORREF(0x0030B0F0) } else { COLORREF(0x000060A0) },
-        if threshold_reached(&ctx.disk_history, disk_threshold) { alert_color } else { text_color },
-        text_color,
+        disk_threshold,
+        disk_color,
+        disk_fill_color,
+        disk_icon_color,
+        disk_text_color,
         chart_background,
+        chart_border,
+        guide_color,
     );
 
     // 後始末
@@ -293,54 +355,87 @@ unsafe fn draw_metric_row(
     history: &MetricHistory,
     y: i32,
     max_scale: f32,
+    threshold: Option<f32>,
     color: COLORREF,
+    fill_color: COLORREF,
     icon_color: COLORREF,
     text_color: COLORREF,
-    chart_background: COLORREF,
+    chart_bg_color: COLORREF,
+    chart_border_color: COLORREF,
+    guide_color: COLORREF,
 ) {
     // 1. アイコン (⚡ / 🌐 / 💾)
     SelectObject(hdc, font_icon);
     SetTextColor(hdc, icon_color);
     let mut icon_w: Vec<u16> = icon.encode_utf16().collect();
     let mut icon_rect = RECT {
-        left: 6,
+        left: 8,
         top: y,
-        right: 25,
-        bottom: y + 18,
+        right: 26,
+        bottom: y + 20,
     };
     DrawTextW(
         hdc,
         &mut icon_w,
         &mut icon_rect,
-        DT_LEFT | DT_SINGLELINE | DT_VCENTER,
+        DT_CENTER | DT_SINGLELINE | DT_VCENTER,
     );
 
-    // 2. チャート背景枠 (スパークライン: 108px × 18px で大きく見やすく)
-    let chart_x = 26;
+    // 2. チャート背景枠 (スパークライン: 118px × 18px、角丸クリッピングで上品に)
+    let chart_x = 28;
     let chart_y = y + 1;
-    let chart_w = 108;
+    let chart_w = 118;
     let chart_h = 18;
 
-    let chart_bg = CreateSolidBrush(chart_background);
-    let chart_rect = RECT {
-        left: chart_x,
-        top: chart_y,
-        right: chart_x + chart_w,
-        bottom: chart_y + chart_h,
-    };
-    FillRect(hdc, &chart_rect, chart_bg);
+    let chart_rgn = CreateRoundRectRgn(chart_x, chart_y, chart_x + chart_w + 1, chart_y + chart_h + 1, 6, 6);
+    let chart_bg = CreateSolidBrush(chart_bg_color);
+    let _ = FillRgn(hdc, chart_rgn, chart_bg);
     let _ = DeleteObject(chart_bg);
 
-    // 3. チャート折れ線 (1px の繊細な細線で描画)
-    let (pts, count) = history.build_points(chart_x, chart_y, chart_w, chart_h, max_scale);
+    // 微細なチャート枠線
+    let chart_border_brush = CreateSolidBrush(chart_border_color);
+    let _ = FrameRgn(hdc, chart_rgn, chart_border_brush, 1, 1);
+    let _ = DeleteObject(chart_border_brush);
+
+    // チャート領域に描画をクリッピング
+    SelectClipRgn(hdc, chart_rgn);
+
+    // しきい値ガイドライン（設定されている場合、控えめな点線で表示）
+    if let Some(th) = threshold {
+        if th > 0.0 && th <= max_scale {
+            let th_y = chart_y + chart_h - 1 - ((th / max_scale) * (chart_h - 2) as f32).round() as i32;
+            let guide_pen = CreatePen(PS_DOT, 1, guide_color);
+            let old_pen = SelectObject(hdc, guide_pen);
+            let _ = windows::Win32::Graphics::Gdi::MoveToEx(hdc, chart_x, th_y, None);
+            let _ = windows::Win32::Graphics::Gdi::LineTo(hdc, chart_x + chart_w, th_y);
+            SelectObject(hdc, old_pen);
+            let _ = DeleteObject(guide_pen);
+        }
+    }
+
+    // 3. チャート折れ線 & エリアフィル (モダンエリアチャート表現)
+    let (pts, count) = history.build_points(chart_x + 1, chart_y + 1, chart_w - 2, chart_h - 2, max_scale);
     if count >= 2 {
+        // 折れ線の下部に上品なエリア塗りつぶし（スタック配列・追加コストゼロ）
+        let mut poly_pts = [POINT { x: 0, y: 0 }; history::HISTORY_CAPACITY + 2];
+        poly_pts[..count].copy_from_slice(&pts[..count]);
+        poly_pts[count] = POINT { x: pts[count - 1].x, y: chart_y + chart_h - 1 };
+        poly_pts[count + 1] = POINT { x: pts[0].x, y: chart_y + chart_h - 1 };
+
+        let area_rgn = CreatePolygonRgn(&poly_pts[..count + 2], WINDING);
+        let area_brush = CreateSolidBrush(fill_color);
+        let _ = FillRgn(hdc, area_rgn, area_brush);
+        let _ = DeleteObject(area_brush);
+        let _ = DeleteObject(area_rgn);
+
+        // 1px のシャープなメイン折れ線
         let pen = CreatePen(PS_SOLID, 1, color);
         let old_pen = SelectObject(hdc, pen);
         let _ = Polyline(hdc, &pts[..count]);
         SelectObject(hdc, old_pen);
         let _ = DeleteObject(pen);
 
-        // 最新値（右端）のポイントに小さな丸ドットを描画 (細線に合わせて 3x3 ドット)
+        // 最新値（右端）のポイントに小さな丸ドットを描画
         let last_pt = pts[count - 1];
         let dot_brush = CreateSolidBrush(color);
         let dot_rect = RECT {
@@ -353,15 +448,19 @@ unsafe fn draw_metric_row(
         let _ = DeleteObject(dot_brush);
     }
 
+    // クリップ領域を解除してリージョン破棄
+    SelectClipRgn(hdc, HRGN::default());
+    let _ = DeleteObject(chart_rgn);
+
     // 4. 現在値の表示
     SelectObject(hdc, font_metric);
     SetTextColor(hdc, text_color);
 
     let mut val_w: Vec<u16> = val_str.encode_utf16().collect();
     let mut val_rect = RECT {
-        left: chart_x + chart_w + 3,
+        left: chart_x + chart_w + 4,
         top: y,
-        right: WIDGET_WIDTH - 6,
+        right: WIDGET_WIDTH - 8,
         bottom: y + 20,
     };
     DrawTextW(
@@ -422,6 +521,10 @@ pub fn spawn_widget(
         );
 
         if let Ok(hwnd) = hwnd {
+            // OS レベルでウィンドウを角丸にクリップ（四隅の黒塗りアーティファクトを防止し、ヒットテストも正確に）
+            let rgn = CreateRoundRectRgn(0, 0, WIDGET_WIDTH + 1, WIDGET_HEIGHT + 1, 16, 16);
+            let _ = SetWindowRgn(hwnd, rgn, true);
+
             {
                 let mut s = state.lock().unwrap();
                 s.widget_hwnd = Some(hwnd.0 as isize);

@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.6] - 2026-11-07
+
+### Changed
+- リソース監視 HUD（ウィジェット）のビジュアルを Windows 11 Fluent Design / Modern SaaS スタイルに刷新。
+  - OS レベルの角丸ウィンドウクリッピング（`SetWindowRgn`）を適用し、Layered Window 特有の四隅の黒三角アーティファクトを解消。
+  - 外枠スリムボーダーとインナーハイライトによる微細なデュアルフレーム構造を導入。
+  - スパークライン折れ線下に軽量なエリア塗りつぶしを追加し、枠内への角丸クリッピング（`SelectClipRgn`）を適用。
+  - スリープ抑制しきい値の点線ガイドラインと最新値インジケータードット（3×3）を追加。
+  - 各メトリクスに洗練されたカラー（CPU: アンバー、NET: エメラルド、DISK: スカイシアン）を割り当て、しきい値超過アラート時はコーラルレッドへ統一切り替え。
+  - Meiryo UI から現代的な Segoe UI（Semibold、ClearType 有効）へ刷新し、数値の視認性と等幅アライメントを向上。
+- タスクトレイのツールチップ表示プレフィックスを "SleepTool v..." に調整。
+
 ## [0.1.5] - 2026-11-07
 
 ### Added
@@ -56,6 +68,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - 初期リリース。
 
+[0.1.6]: https://github.com/cwatanab/sleeptool-rs/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/cwatanab/sleeptool-rs/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/cwatanab/sleeptool-rs/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/cwatanab/sleeptool-rs/compare/v0.1.2...v0.1.3
